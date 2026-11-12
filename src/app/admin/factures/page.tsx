@@ -21,6 +21,11 @@ const COULEURS: Record<string, string> = {
   TIPN: '#06b6d4', TPC: '#8b5cf6', WIFIPRO: '#22d3ee',
 };
 
+/** Format nombre avec espace simple (évite le "/" de certains rendus). */
+function fmt(n: number) {
+  return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
 export default function FacturesPage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
   const [mois, setMois] = useState('2026-09');
@@ -125,90 +130,111 @@ export default function FacturesPage() {
     const autoTable = (await import('jspdf-autotable')).default;
     const doc = new jsPDF();
 
-    // En-tête + logo Flow
+    // En-tête pro : bandeau navy + logo Flow + titre
+    doc.setFillColor(11, 19, 48);
+    doc.rect(0, 0, 210, 28, 'F');
+    doc.setFillColor(38, 212, 234);
+    doc.rect(0, 28, 210, 1.2, 'F');
     try {
-      const res = await fetch('/acx-flow-logo-transparent.png');
+      const res = await fetch('/acx-flow-logo-light.png');
       const blob = await res.blob();
       const base64 = await new Promise<string>((resolve) => {
         const r = new FileReader();
         r.onload = () => resolve(String(r.result));
         r.readAsDataURL(blob);
       });
-      doc.addImage(base64, 'PNG', 14, 8, 55, 8.3);
+      doc.addImage(base64, 'PNG', 14, 7, 52, 7.9);
     } catch { /* logo optionnel */ }
-    doc.setFontSize(9);
-    doc.setTextColor(100);
+    doc.setFontSize(8);
+    doc.setTextColor(195, 206, 228);
     doc.text('By ACX Maroc', 14, 20);
     doc.setFontSize(16);
     doc.setTextColor(11, 19, 48);
-    doc.text(`Facture PAVA — ${MOIS.find((m) => m.id === mois)?.label}`, 14, 30);
+    doc.text(`Facture PAVA — ${MOIS.find((m) => m.id === mois)?.label}`, 14, 38);
     doc.setFontSize(10);
-    doc.setTextColor(80);
-    doc.text(`Videotron PAV Affaire · Total : ${resultat.totalRecalcule.toLocaleString('fr-FR')} $ · ${resultat.lignes.length} lignes · Statut : ${statut}`, 14, 37);
-    doc.text(`Générée le ${new Date().toLocaleDateString('fr-FR')} · ACX Flow`, 14, 43);
+    doc.setTextColor(84, 101, 138);
+    doc.text(`Videotron PAV Affaire · Total : ${fmt(resultat.totalRecalcule)} $ · ${resultat.lignes.length} lignes · Statut : ${statut === 'validee' ? 'Validée' : statut === 'valide_admin' ? 'Validée Admin' : 'En cours'}`, 14, 45);
+    doc.text(`Générée le ${new Date().toLocaleDateString('fr-FR')} · ACX Flow · Espace VL PAVA`, 14, 51);
 
-    // Tableau par famille
+    // Sommaire en premier (comme FAC PAVA) : par famille puis par nature
     doc.setFontSize(12);
     doc.setTextColor(11, 19, 48);
-    doc.text('Synthèse par famille', 14, 52);
+    doc.text('Sommaire — par famille', 14, 60);
     autoTable(doc, {
-      startY: 55,
+      startY: 63,
       head: [['Famille', 'Quantité', 'Montant ($)']],
       body: [
-        ...parFamille.map(([f, v]) => [f, String(v.qte), v.montant.toLocaleString('fr-FR')]),
-        ['Total général', String(parFamille.reduce((s, [, v]) => s + v.qte, 0)), parFamille.reduce((s, [, v]) => s + v.montant, 0).toLocaleString('fr-FR')],
+        ...parFamille.map(([f, v]) => [f, String(v.qte), fmt(v.montant)]),
+        ['Total général', String(parFamille.reduce((s, [, v]) => s + v.qte, 0)), fmt(parFamille.reduce((s, [, v]) => s + v.montant, 0))],
       ],
       styles: { fontSize: 9 },
-      headStyles: { fillColor: [11, 19, 48] },
+      headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [238, 242, 251] },
     });
 
-    // Tableau sommaire
     const y1 = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 90;
     doc.setFontSize(12);
-    doc.text('Sommaire', 14, y1 + 10);
+    doc.text('Sommaire — par nature', 14, y1 + 10);
     autoTable(doc, {
       startY: y1 + 13,
       head: [['Catégorie', 'Quantité', 'Prix ($)']],
       body: [
-        ...parNature.map(([n, v]) => [n, String(v.qte), v.montant.toLocaleString('fr-FR')]),
-        ['TOTAL', String(parNature.reduce((s, [, v]) => s + v.qte, 0)), parNature.reduce((s, [, v]) => s + v.montant, 0).toLocaleString('fr-FR')],
+        ...parNature.map(([n, v]) => [n, String(v.qte), fmt(v.montant)]),
+        ['TOTAL', String(parNature.reduce((s, [, v]) => s + v.qte, 0)), fmt(parNature.reduce((s, [, v]) => s + v.montant, 0))],
       ],
       styles: { fontSize: 9 },
-      headStyles: { fillColor: [11, 19, 48] },
+      headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [238, 242, 251] },
     });
 
-    // Graphes : barres par famille
+    // Graphes thème plateforme (navy / cyan / violet)
     const y2 = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 130;
-    if (y2 > 250) doc.addPage();
-    const gy = y2 > 250 ? 20 : y2 + 12;
+    if (y2 > 240) doc.addPage();
+    const gy = y2 > 240 ? 20 : y2 + 12;
     doc.setFontSize(12);
+    doc.setTextColor(11, 19, 48);
     doc.text('Montants par famille', 14, gy);
     const max = Math.max(1, ...parFamille.map(([, v]) => v.montant));
+    const rgb: Record<string, [number, number, number]> = {
+      CAB: [37, 99, 235], CELL: [8, 145, 178], NUM: [124, 58, 237], REDO: [14, 165, 233],
+      TIPN: [6, 182, 212], TPC: [139, 92, 246], WIFIPRO: [34, 211, 238],
+    };
     parFamille.forEach(([f, v], i) => {
       const y = gy + 8 + i * 9;
       doc.setFontSize(8);
-      doc.setTextColor(60);
+      doc.setTextColor(84, 101, 138);
       doc.text(f, 14, y + 3);
       const w = (v.montant / max) * 110;
-      doc.setFillColor(37, 99, 235);
+      const c = rgb[f] || [37, 99, 235];
+      doc.setFillColor(c[0], c[1], c[2]);
       doc.rect(32, y, w, 5, 'F');
       doc.setTextColor(11, 19, 48);
-      doc.text(`${v.montant.toLocaleString('fr-FR')} $`, 34 + w, y + 3);
+      doc.text(`${fmt(v.montant)} $`, 34 + w, y + 3);
     });
 
-    // Détail des lignes (page suivante)
+    // Détails utiles pour la facturation (résumé par code service, pas toutes les lignes)
     doc.addPage();
     doc.setFontSize(12);
     doc.setTextColor(11, 19, 48);
-    doc.text('Détail des lignes', 14, 16);
+    doc.text('Détails utiles pour la facturation', 14, 16);
+    doc.setFontSize(9);
+    doc.setTextColor(84, 101, 138);
+    doc.text('Résumé par code service. Le détail ligne par ligne est dans le fichier Excel.', 14, 22);
+    const parCode = new Map<string, { qte: number; montant: number }>();
+    for (const l of resultat.lignes) {
+      const cle = l.code_service || l.famille;
+      const e = parCode.get(cle) || { qte: 0, montant: 0 };
+      e.qte += l.qty || 1;
+      e.montant += l.montant_attendu ?? l.paiement_pav ?? 0;
+      parCode.set(cle, e);
+    }
     autoTable(doc, {
-      startY: 20,
-      head: [['Feuille', 'Ligne', 'Compte', 'Produit', 'Catégorie', 'Montant']],
-      body: resultat.lignes.slice(0, 200).map((l) => [
-        l.feuille, String(l.ligne_excel), l.no_cli || '—', `${l.famille} ${l.code_service}`, l.nature, String(l.montant_attendu ?? l.paiement_pav ?? ''),
-      ]),
-      styles: { fontSize: 7 },
-      headStyles: { fillColor: [11, 19, 48] },
+      startY: 26,
+      head: [['Code service', 'Quantité', 'Montant ($)']],
+      body: [...parCode.entries()].sort((a, b) => b[1].montant - a[1].montant).map(([c, v]) => [c, String(v.qte), fmt(v.montant)]),
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [238, 242, 251] },
     });
 
     doc.save(`facture-pava-${mois}.pdf`);
@@ -234,7 +260,7 @@ export default function FacturesPage() {
       <section className="g-hero g-glass g-rise">
         <div>
           <div className="g-kicker"><i /> {validee ? 'Facture validée' : 'Facture en cours'}</div>
-          <h2>{MOIS.find((m) => m.id === mois)?.label} · <em>{resultat.totalRecalcule.toLocaleString('fr-FR')} $</em></h2>
+          <h2>{MOIS.find((m) => m.id === mois)?.label} · <em>{fmt(resultat.totalRecalcule)} $</em></h2>
           <p>{resultat.lignes.length} lignes · PDF pro avec en-tête, logo Flow, tableaux et graphes · Excel avec Synthèse, Price Plan, Détails, Anomalies.</p>
           <div className="g-hero-actions">
             <button type="button" className="g-btn" onClick={exporterExcel}>
@@ -266,7 +292,7 @@ export default function FacturesPage() {
               <thead><tr><th>Famille</th><th>Quantité</th><th style={{ textAlign: 'right' }}>Montant</th></tr></thead>
               <tbody>
                 {parFamille.map(([f, v]) => (
-                  <tr key={f}><td><b>{f}</b></td><td>{v.qte}</td><td style={{ textAlign: 'right' }}>{v.montant.toLocaleString('fr-FR')} $</td></tr>
+                  <tr key={f}><td><b>{f}</b></td><td>{v.qte}</td><td style={{ textAlign: 'right' }}>{fmt(v.montant)} $</td></tr>
                 ))}
               </tbody>
             </table>
@@ -276,14 +302,14 @@ export default function FacturesPage() {
               <thead><tr><th>Sommaire</th><th>Quantité</th><th style={{ textAlign: 'right' }}>Prix</th></tr></thead>
               <tbody>
                 {parNature.map(([n, v]) => (
-                  <tr key={n}><td><b>{n}</b></td><td>{v.qte}</td><td style={{ textAlign: 'right' }}>{v.montant.toLocaleString('fr-FR')} $</td></tr>
+                  <tr key={n}><td><b>{n}</b></td><td>{v.qte}</td><td style={{ textAlign: 'right' }}>{fmt(v.montant)} $</td></tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
         <div className="g-card-foot">
-          <span>{resultat.lignes.length} lignes · {resultat.totalRecalcule.toLocaleString('fr-FR')} $</span>
+          <span>{resultat.lignes.length} lignes · {fmt(resultat.totalRecalcule)} $</span>
           <span>Testez les boutons Excel et PDF ci-dessus</span>
         </div>
       </section>

@@ -52,18 +52,31 @@ export function detecterFeuille(nom: string, colonnes: string[]): FeuilleDetecte
   return { nom, format: 'VL', nature: 'AJOUT', colonnes, avertissement: 'Feuille non reconnue : mapping à confirmer.' };
 }
 
-/** Famille depuis le code service (VL) ou le type ACJ. */
+/** Famille normalisée (FAC PAVA) depuis le code service (VL) ou le type ACJ.
+ * Familles officielles : CAB, CELL, NUM, REDO, TIPN, TPC, WIFIPRO.
+ * Les codes bruts (*LIAFF, @A500Y, *PRO, etc.) sont rattachés à leur famille.
+ */
 export function familleDepuisCode(code: string, typeAcj = ''): string {
-  const c = (code || '').toUpperCase();
+  const c = (code || '').toUpperCase().trim();
   const t = (typeAcj || '').toUpperCase();
-  if (t.includes('INT_CAB') || c.includes('CAB')) return 'CAB';
-  if (t.includes('TPC_ACCES') || c.includes('TPC')) return 'TPC';
-  if (t.includes('TSF_ACCES') || c.includes('CELL') || c.includes('TMO') || c.includes('SIM')) return 'CELL';
-  if (t.includes('TIPN') || c.includes('TIPN')) return 'TIPN';
-  if (t.includes('ACCES_WIFI') || c.includes('WIFIPRO') || c.includes('WIFI')) return 'WIFIPRO';
-  if (t.includes('TSF_INT_REDOND') || c.includes('REDO') || c.includes('GRED')) return 'REDO';
+  // ACJ
+  if (t.includes('INT_CAB')) return 'CAB';
+  if (t.includes('TPC_ACCES')) return 'TPC';
+  if (t.includes('TSF_ACCES')) return 'CELL';
+  if (t.includes('TIPN')) return 'TIPN';
+  if (t.includes('ACCES_WIFI')) return 'WIFIPRO';
+  if (t.includes('TSF_INT_REDOND')) return 'REDO';
+  // Codes bruts observés dans les exports
+  if (c.startsWith('@A') || c.startsWith('@PAW') || c === 'INT' || c.includes('CAB') || c.includes('FIBRE') || c.includes('INTERNET')) return 'CAB';
+  if (c.startsWith('*PRO') || c.startsWith('*FIXE') || c.startsWith('*EXEC') || c.includes('TIPN') || c.includes('LIAFF') || c.includes('COMM NUAGE')) return 'TIPN';
+  if (c.includes('TPC')) return 'TPC';
+  if (c.includes('CELL') || c.includes('TMO') || c.includes('SIM') || c === 'TEL') return 'CELL';
+  if (c.includes('WIFIPRO') || c.includes('WIFI') || c.includes('PAWML') || c.includes('PAWPL')) return 'WIFIPRO';
+  if (c.includes('REDO') || c.includes('GRED') || c.includes('REDONDANCE')) return 'REDO';
   if (c.includes('NUM') || c.includes('TV') || c.includes('BANA')) return 'NUM';
-  return c || 'CAB';
+  // Fallback : si le code est déjà une famille normalisée, le garder
+  if (['CAB', 'CELL', 'NUM', 'REDO', 'TIPN', 'TPC', 'WIFIPRO'].includes(c)) return c;
+  return 'CAB';
 }
 
 /** Source : CD_SRC_COM (VL) ou No Source Ci (ACJ). 43=TMA, 45=GE, 41=RETA, 7=SACA. */
