@@ -1,25 +1,60 @@
 'use client';
 
 /**
- * Factures PAVA — navigation par mois et statut.
- * Septembre validée (Excel + PDF), octobre en cours.
- * Résumé du mois choisi, sans afficher toutes les lignes en bas.
+ * Factures PAVA — résumé du mois + export Excel/PDF.
+ * Septembre validée, octobre en cours. Boutons actifs pour tester les exports.
  */
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { getPavaState, subscribePava } from '@/lib/pava-store';
+import { runEngine, depuisDemo } from '@/lib/pava/engine';
 
 const MOIS = [
-  { id: '2026-09', label: 'Septembre 2026', statut: 'Validée' },
-  { id: '2026-10', label: 'Octobre 2026', statut: 'En cours' },
+  { id: '2026-09', label: 'Septembre 2026' },
+  { id: '2026-10', label: 'Octobre 2026' },
 ];
 
 export default function FacturesPage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
   const [mois, setMois] = useState('2026-09');
-  const lignes = useMemo(() => snap.lignes.filter((l) => l.mois === mois), [snap.lignes, mois]);
-  const total = lignes.reduce((s, l) => s + ((l.montantCalcule ?? l.montantOrigine ?? 0) + (l.ajustement || 0)), 0);
-  const validee = mois === '2026-09';
+
+  const lignesNorm = useMemo(
+    () => depuisDemo(snap.lignes.filter((l) => l.mois === mois) as unknown as Array<Record<string, unknown>>, mois),
+    [snap.lignes, mois]
+  );
+  const resultat = useMemo(() => runEngine(lignesNorm, snap.params), [lignesNorm, snap.params]);
+  const statut = snap.statutFacture[mois] || 'en_cours';
+  const validee = statut === 'validee' || statut === 'valide_admin';
+
+  const exporterExcel = async () => {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const rows = resultat.lignes.map((l) => ({
+      Période: l.periode, Feuille: l.feuille, 'Ligne Excel': l.ligne_excel,
+      NO_CLI: l.no_cli, Nature: l.nature, Famille: l.famille, Code: l.code_service,
+      Qty: l.qty, Payé: l.paiement_pav, Attendu: l.montant_attendu, Écart: l.ecart,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Facture');
+    XLSX.writeFile(wb, `facture-pava-${mois}.xlsx`);
+  };
+
+  const exporterPdf = async () => {
+    const { jsPDF } = await import('jspdf');
+    const autoTable = (await import('jspdf-autotable')).default;
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text(`Facture PAVA — ${mois}`, 14, 18);
+    doc.setFontSize(11);
+    doc.text(`Total : ${resultat.totalRecalcule.toLocaleString('fr-FR')} $ · ${resultat.lignes.length} lignes · Statut : ${statut}`, 14, 26);
+    autoTable(doc, {
+      startY: 32,
+      head: [['Feuille', 'Ligne', 'Compte', 'Produit', 'Catégorie', 'Montant']],
+      body: resultat.lignes.slice(0, 100).map((l) => [
+        l.feuille, String(l.ligne_excel), l.no_cli || '—', `${l.famille} ${l.code_service}`, l.nature, String(l.montant_attendu ?? l.paiement_pav ?? ''),
+      ]),
+    });
+    doc.save(`facture-pava-${mois}.pdf`);
+  };
 
   return (
     <>
@@ -32,7 +67,7 @@ export default function FacturesPage() {
         <div className="g-tools">
           <select className="g-chip" aria-label="Mois" value={mois} onChange={(e) => setMois(e.target.value)}>
             {MOIS.map((m) => (
-              <option key={m.id} value={m.id}>{m.label} · {m.statut}</option>
+              <option key={m.id} value={m.id}>{m.label} · {snap.statutFacture[m.id] === 'validee' ? 'Validée' : 'En cours'}</option>
             ))}
           </select>
         </div>
@@ -41,21 +76,21 @@ export default function FacturesPage() {
       <section className="g-hero g-glass g-rise">
         <div>
           <div className="g-kicker"><i /> {validee ? 'Facture validée' : 'Facture en cours'}</div>
-          <h2>{MOIS.find((m) => m.id === mois)?.label} · <em>{total.toLocaleString('fr-FR')} $</em></h2>
-          <p>{lignes.length} lignes · {validee ? 'Excel + PDF générés' : 'En attente de validation Admin puis Directeur'}.</p>
+          <h2>{MOIS.find((m) => m.id === mois)?.label} · <em>{resultat.totalRecalcule.toLocaleString('fr-FR')} $</em></h2>
+          <p>{resultat.lignes.length} lignes · {validee ? 'Prête à télécharger' : 'Validation en cours (Admin puis Directeur)'}.</p>
           <div className="g-hero-actions">
-            <button type="button" className="g-btn" disabled={!validee}>
+            <button type="button" className="g-btn" onClick={exporterExcel}>
               Télécharger Excel
             </button>
-            <button type="button" className="g-btn g-btn--ghost" disabled={!validee}>
+            <button type="button" className="g-btn g-btn--ghost" onClick={exporterPdf}>
               Télécharger PDF
             </button>
           </div>
         </div>
         <div className="g-hero-side">
-          <b className="g-num">{lignes.length}</b>
+          <b className="g-num">{resultat.lignes.length}</b>
           <span>lignes</span>
-          <small>{validee ? 'Validée' : 'En cours'}</small>
+          <small>{statut}</small>
         </div>
       </section>
 
@@ -68,8 +103,8 @@ export default function FacturesPage() {
           <span className={`g-badge ${validee ? 'is-ok' : 'is-warn'}`}><i className="g-dot" />{validee ? 'Validée' : 'En cours'}</span>
         </div>
         <div className="g-card-foot">
-          <span>{lignes.length} lignes · {total.toLocaleString('fr-FR')} $</span>
-          <span>{validee ? 'Prête à télécharger' : 'Validation en cours'}</span>
+          <span>{resultat.lignes.length} lignes · {resultat.totalRecalcule.toLocaleString('fr-FR')} $</span>
+          <span>Testez les boutons Excel et PDF ci-dessus</span>
         </div>
       </section>
     </>

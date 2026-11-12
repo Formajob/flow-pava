@@ -10,12 +10,15 @@
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.5",
     "autoprefixer": "^10.6.2",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.9",
     "next": "^16.4.6",
     "next-auth": "^4.24.15",
     "postcss": "^8.5.32",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "tailwindcss": "^4.3.5"
+    "tailwindcss": "^4.3.5",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
