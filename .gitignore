@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# next
+.next/
+out/
+build/
+dist/
+
+# env (ne jamais committer les vraies clés)
+.env
+.env*.local
+.env.production
+
+# logs
+*.log
+npm-debug.log*
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
