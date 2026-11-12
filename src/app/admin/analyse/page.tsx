@@ -10,7 +10,7 @@
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { getPavaState, subscribePava, setDecision } from '@/lib/pava-store';
+import { getPavaState, subscribePava, setDecision, updateLigne, deleteLigne } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 import type { Anomaly, StatutAnomalie } from '@/lib/pava/types';
 
@@ -34,6 +34,8 @@ export default function AnalysePage() {
   const [filtreConfiance, setFiltreConfiance] = useState('');
   const [filtreFamille, setFiltreFamille] = useState('');
   const [filtreStatut, setFiltreStatut] = useState('');
+  const [correction, setCorrection] = useState<string | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
 
   const lignesNorm = useMemo(
     () => depuisDemo(snap.lignes as unknown as Array<Record<string, unknown>>, snap.mois),
@@ -69,6 +71,40 @@ export default function AnalysePage() {
     const next = { ...decisions, [id]: statut };
     setDecisions(next);
     setDecision(id, { statut, commentaire: '' });
+  };
+
+  const ouvrirCorrection = (a: Anomaly) => {
+    const ligne = snap.lignes.find((l) => l.feuille === a.feuille && l.ligneExcel === a.ligne_excel);
+    if (!ligne) {
+      alert('Ligne source introuvable.');
+      return;
+    }
+    setCorrection(ligne.id);
+    setForm({
+      compte: ligne.compte, produit: ligne.produit, desc: ligne.desc,
+      categorie: ligne.categorie, source: ligne.source,
+      quantite: String(ligne.quantite), montantOrigine: String(ligne.montantOrigine ?? ''),
+      puissance: ligne.puissance || '',
+    });
+  };
+
+  const enregistrerCorrection = () => {
+    if (!correction) return;
+    updateLigne(correction, {
+      compte: form.compte, produit: form.produit, desc: form.desc,
+      categorie: form.categorie as never, source: form.source,
+      quantite: Number(form.quantite) || 1,
+      montantOrigine: form.montantOrigine === '' ? null : Number(form.montantOrigine),
+      puissance: form.puissance,
+    });
+    setCorrection(null);
+  };
+
+  const supprimerLigne = () => {
+    if (!correction) return;
+    if (!confirm('Supprimer cette ligne de la facture ?')) return;
+    deleteLigne(correction);
+    setCorrection(null);
   };
 
   const exporter = async () => {
@@ -226,9 +262,16 @@ export default function AnalysePage() {
                     <td><span className={`g-badge ${a.confiance === 'REGLE' ? 'is-ok' : a.confiance === 'PROBABLE' ? 'is-info' : a.confiance === 'A_VALIDER' ? 'is-warn' : 'is-muted'}`}><i className="g-dot" />{a.confiance}</span></td>
                     <td><span className={`g-badge ${a.statut === 'valide' ? 'is-ok' : a.statut === 'rejete' ? 'is-bad' : 'is-warn'}`}><i className="g-dot" />{a.statut}</span></td>
                     <td>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button type="button" className="g-btn g-btn--sm" onClick={() => setStatut(a.id, 'valide')}>Valider</button>
-                        <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => setStatut(a.id, 'rejete')}>Rejeter</button>
+                      <div style={{ display: 'flex', gap: 6, whiteSpace: 'nowrap' }}>
+                        <button type="button" className="g-btn g-btn--sm" style={{ width: 36, height: 36, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Valider" aria-label="Valider" onClick={() => setStatut(a.id, 'valide')}>
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                        </button>
+                        <button type="button" className="g-btn g-btn--ghost g-btn--sm" style={{ width: 36, height: 36, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Rejeter" aria-label="Rejeter" onClick={() => setStatut(a.id, 'rejete')}>
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                        </button>
+                        <button type="button" className="g-btn g-btn--ghost g-btn--sm" style={{ width: 36, height: 36, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Corriger" aria-label="Corriger" onClick={() => ouvrirCorrection(a)}>
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -241,6 +284,30 @@ export default function AnalysePage() {
           <span>{affichees.length} affichées sur {anomalies.length}</span>
           <span>Export xlsx : Synthèse, Anomalies, Lignes recalculées</span>
         </div>
+        {correction && (
+          <div className="g-card" style={{ padding: 16, marginTop: 12, background: 'rgba(255,255,255,.6)' }}>
+            <h4 style={{ margin: '0 0 12px' }}>Corriger la ligne</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10 }}>
+              <label>Compte<input className="g-input" value={form.compte || ''} onChange={(e) => setForm({ ...form, compte: e.target.value })} /></label>
+              <label>Produit<input className="g-input" value={form.produit || ''} onChange={(e) => setForm({ ...form, produit: e.target.value })} /></label>
+              <label>Description<input className="g-input" value={form.desc || ''} onChange={(e) => setForm({ ...form, desc: e.target.value })} /></label>
+              <label>Catégorie
+                <select className="g-input" value={form.categorie || ''} onChange={(e) => setForm({ ...form, categorie: e.target.value })}>
+                  <option>AJOUT</option><option>RENOUVELLEMENT</option><option>SACA</option><option>NON_FACTUREE</option>
+                </select>
+              </label>
+              <label>Source<input className="g-input" value={form.source || ''} onChange={(e) => setForm({ ...form, source: e.target.value })} /></label>
+              <label>Quantité<input className="g-input" type="number" value={form.quantite || ''} onChange={(e) => setForm({ ...form, quantite: e.target.value })} /></label>
+              <label>Montant<input className="g-input" type="number" value={form.montantOrigine || ''} onChange={(e) => setForm({ ...form, montantOrigine: e.target.value })} /></label>
+              <label>Puissance<input className="g-input" value={form.puissance || ''} onChange={(e) => setForm({ ...form, puissance: e.target.value })} /></label>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button type="button" className="g-btn g-btn--sm" onClick={enregistrerCorrection}>Enregistrer</button>
+              <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={supprimerLigne}>Supprimer</button>
+              <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => setCorrection(null)}>Annuler</button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="g-card g-glass g-rise">

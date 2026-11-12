@@ -129,8 +129,12 @@ export default function ControlePage() {
                       value={commentaires[a.id] || ''}
                       onChange={(e) => setCommentaires({ ...commentaires, [a.id]: e.target.value })}
                     />
-                    <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => ignorer(a.id)}>Ignorer</button>
-                    <button type="button" className="g-btn g-btn--sm" onClick={() => ouvrirCorrection(a.id)}>Corriger</button>
+                    <button type="button" className="g-btn g-btn--ghost g-btn--sm" style={{ width: 36, height: 36, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Ignorer" aria-label="Ignorer" onClick={() => ignorer(a.id)}>
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10" /><path d="m4.9 4.9 14.2 14.2" /></svg>
+                    </button>
+                    <button type="button" className="g-btn g-btn--sm" style={{ width: 36, height: 36, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Corriger" aria-label="Corriger" onClick={() => ouvrirCorrection(a.id)}>
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
+                    </button>
                   </div>
                   {correction && (
                     <div className="g-card" style={{ padding: 16, background: 'rgba(255,255,255,.6)' }}>
