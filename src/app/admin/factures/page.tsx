@@ -8,7 +8,7 @@
  */
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import { getPavaState, subscribePava, REF } from '@/lib/pava-store';
+import { getPavaState, subscribePava, REF, setActiveCommande, deleteCommande } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 
 const MOIS = [
@@ -246,7 +246,7 @@ export default function FacturesPage() {
         <div>
           <div className="g-kicker"><i /> VL · PAVA Affaire</div>
           <h1>Factures</h1>
-          <p className="g-lead">Résumé de la facture du mois choisi et téléchargement des rapports pro.</p>
+          <p className="g-lead">Toutes les commandes de facturation : facture du mois, ancienne facture à valider, test, suivi de production.</p>
         </div>
         <div className="g-tools">
           <select className="g-chip" aria-label="Mois" value={mois} onChange={(e) => setMois(e.target.value)}>
@@ -312,6 +312,44 @@ export default function FacturesPage() {
           <span>{resultat.lignes.length} lignes · {fmt(resultat.totalRecalcule)} $</span>
           <span>Testez les boutons Excel et PDF ci-dessus</span>
         </div>
+      </section>
+
+      <section className="g-card g-glass g-rise">
+        <div className="g-card-head">
+          <div>
+            <h3 className="g-card-title">Toutes les commandes · {snap.commandes.length}</h3>
+            <p className="g-card-sub">Une commande en cours peut être supprimée. Une facture validée par le Directeur ne peut pas être supprimée sans accès.</p>
+          </div>
+        </div>
+        <ul className="g-list">
+          {snap.commandes.map((c) => (
+            <li key={c.id}>
+              <div className="g-list-item">
+                <span className="g-list-main">
+                  <b>{c.nom}</b>
+                  <span>{c.type} · {c.lignes.length} lignes · {c.historique.length} entrées d&apos;historique</span>
+                </span>
+                <span className="g-list-side" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span className={`g-badge ${c.statut === 'validee' ? 'is-ok' : c.statut === 'valide_admin' ? 'is-info' : 'is-warn'}`}><i className="g-dot" />{c.statut === 'validee' ? 'Validée' : c.statut === 'valide_admin' ? 'Validée Admin' : 'En cours'}</span>
+                  <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => setActiveCommande(c.id)}>Ouvrir</button>
+                  <button
+                    type="button"
+                    className="g-btn g-btn--ghost g-btn--sm"
+                    disabled={c.statut === 'validee'}
+                    title={c.statut === 'validee' ? 'Validée par le Directeur : suppression interdite sans accès' : 'Supprimer'}
+                    onClick={() => {
+                      if (!confirm(`Supprimer la commande « ${c.nom} » ?`)) return;
+                      const ok = deleteCommande(c.id);
+                      if (!ok) alert('Suppression impossible : facture validée par le Directeur.');
+                    }}
+                  >
+                    Supprimer
+                  </button>
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
       </section>
     </>
   );

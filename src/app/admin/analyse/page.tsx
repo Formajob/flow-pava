@@ -10,7 +10,7 @@
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { getPavaState, subscribePava, setDecision, updateLigne, deleteLigne } from '@/lib/pava-store';
+import { getPavaState, subscribePava, setDecision, updateLigne, deleteLigne, setActiveCommande, addHistorique } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 import type { Anomaly, StatutAnomalie } from '@/lib/pava/types';
 
@@ -144,15 +144,20 @@ export default function AnalysePage() {
           <div className="g-kicker"><i /> VL · PAVA Affaire</div>
           <h1>Analyse</h1>
           <p className="g-lead">
-            Première version de la facture recalculée, puis incohérences extraites pour action manuelle.
-            Mois {snap.mois} · {resultat.lignes.length} lignes recalculées.
+            Commande « {snap.nomCommande} » · Première version recalculée, puis incohérences extraites.
+            {resultat.lignes.length} lignes recalculées.
           </p>
         </div>
         <div className="g-tools">
-          <button type="button" className="g-btn" onClick={exporter}>
-            Exporter xlsx
+          <select className="g-chip" aria-label="Commande" value={snap.activeCommandeId} onChange={(e) => setActiveCommande(e.target.value)}>
+            {snap.commandes.map((c) => (
+              <option key={c.id} value={c.id}>{c.nom}</option>
+            ))}
+          </select>
+          <button type="button" className="g-btn" onClick={() => { addHistorique('Analyse lancée'); exporter(); }}>
+            Lancer l&apos;analyse + Exporter xlsx
           </button>
-          <Link className="g-btn g-btn--ghost" href="/admin/reception">Importer en Réception</Link>
+          <Link className="g-btn g-btn--ghost" href="/admin/importation">Importer</Link>
         </div>
       </header>
 
@@ -179,6 +184,36 @@ export default function AnalysePage() {
           <b className="g-value g-num">{anomalies.length}</b>
           <span className="g-label">Anomalies</span>
         </article>
+      </section>
+
+      <section className="g-card g-glass g-rise">
+        <div className="g-card-head">
+          <div>
+            <h3 className="g-card-title">Types de produits · Conforme / Incohérence</h3>
+            <p className="g-card-sub">Nombre de lignes par type de produit, séparé en conformes et incohérentes.</p>
+          </div>
+        </div>
+        <div className="g-table-wrap">
+          <table className="g-table">
+            <thead><tr><th>Type de produit</th><th>Conforme / Valide</th><th>Incohérence</th><th>Total</th></tr></thead>
+            <tbody>
+              {(() => {
+                const parType = new Map<string, { ok: number; ko: number }>();
+                const incoIds = new Set(anomalies.map((a) => `${a.feuille}|${a.ligne_excel}`));
+                for (const l of resultat.lignes) {
+                  const cle = l.famille || '—';
+                  const e = parType.get(cle) || { ok: 0, ko: 0 };
+                  if (incoIds.has(`${l.feuille}|${l.ligne_excel}`)) e.ko += 1;
+                  else e.ok += 1;
+                  parType.set(cle, e);
+                }
+                return [...parType.entries()].map(([t, v]) => (
+                  <tr key={t}><td><b>{t}</b></td><td>{v.ok}</td><td>{v.ko}</td><td>{v.ok + v.ko}</td></tr>
+                ));
+              })()}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="g-card g-glass g-rise">

@@ -127,6 +127,9 @@ export default function AdminDashboardPage() {
               </svg>
               Voir les Factures
             </Link>
+            <Link className="g-btn g-btn--ghost" href="/admin/importation">
+              Créer une commande
+            </Link>
           </div>
         </div>
         <div className="g-hero-side">

@@ -49,6 +49,25 @@ export interface Decision {
   commentaire: string;
 }
 
+export interface HistoriqueEntree {
+  date: string;
+  action: string;
+}
+
+export interface Commande {
+  id: string;
+  nom: string;
+  type: 'facture_mois' | 'verification' | 'test' | 'suivi';
+  mois?: string;
+  dateCreation: string;
+  statut: 'en_cours' | 'valide_admin' | 'validee';
+  lignes: PavaLigne[];
+  fichiers: ImportedFile[];
+  decisions: Record<string, Decision>;
+  historique: HistoriqueEntree[];
+  etape: string;
+}
+
 export interface PavaState {
   role: Role;
   mois: string;
@@ -58,6 +77,9 @@ export interface PavaState {
   params: PavaParams;
   decisions: Record<string, Decision>;
   statutFacture: Record<string, string>;
+  commandes: Commande[];
+  activeCommandeId: string;
+  nomCommande: string;
 }
 
 const KEY = 'flow-pava-v1';
@@ -106,10 +128,30 @@ function seedLines(): PavaLigne[] {
 }
 
 function defaultState(): PavaState {
+  const lignes = seedLines();
+  const sept = lignes.filter((l) => l.mois === '2026-09');
+  const oct = lignes.filter((l) => l.mois === '2026-10');
+  const commandes: Commande[] = [
+    {
+      id: 'cmd-sept-2026', nom: 'Facture Septembre 2026', type: 'facture_mois', mois: '2026-09',
+      dateCreation: new Date().toISOString(), statut: 'validee',
+      lignes: sept, fichiers: [], decisions: {},
+      historique: [{ date: new Date().toISOString(), action: 'Commande créée (démo)' }],
+      etape: 'factures',
+    },
+    {
+      id: 'cmd-oct-2026', nom: 'Facture Octobre 2026', type: 'facture_mois', mois: '2026-10',
+      dateCreation: new Date().toISOString(), statut: 'en_cours',
+      lignes: oct, fichiers: [], decisions: {},
+      historique: [{ date: new Date().toISOString(), action: 'Commande créée (démo)' }],
+      etape: 'analyse',
+    },
+  ];
   return {
-    role: 'admin', mois: '2026-10', lignes: seedLines(), rules: DEFAULT_RULES,
+    role: 'admin', mois: '2026-10', lignes: oct, rules: DEFAULT_RULES,
     fichiers: [], params: DEFAULT_PARAMS, decisions: {},
     statutFacture: { '2026-09': 'validee', '2026-10': 'en_cours' },
+    commandes, activeCommandeId: 'cmd-oct-2026', nomCommande: 'Facture Octobre 2026',
   };
 }
 
@@ -122,13 +164,17 @@ function load(): PavaState {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<PavaState>;
+      const def = defaultState();
       memory = {
-        ...defaultState(),
+        ...def,
         ...parsed,
         fichiers: parsed.fichiers || [],
         params: parsed.params || DEFAULT_PARAMS,
         decisions: parsed.decisions || {},
         statutFacture: parsed.statutFacture || { '2026-09': 'validee', '2026-10': 'en_cours' },
+        commandes: parsed.commandes || def.commandes,
+        activeCommandeId: parsed.activeCommandeId || def.activeCommandeId,
+        nomCommande: parsed.nomCommande || def.nomCommande,
       };
       return memory;
     }
@@ -191,7 +237,83 @@ export function setDecision(anomalyId: string, decision: Decision) {
 
 export function setStatutFacture(mois: string, statut: string) {
   const s = load();
-  save({ ...s, statutFacture: { ...s.statutFacture, [mois]: statut } });
+  const commandes = s.commandes.map((c) =>
+    c.id === s.activeCommandeId ? { ...c, statut: statut as Commande['statut'], historique: [...c.historique, { date: new Date().toISOString(), action: `Statut → ${statut}` }] } : c
+  );
+  save({ ...s, statutFacture: { ...s.statutFacture, [mois]: statut }, commandes });
+}
+
+function syncActive(s: PavaState): PavaState {
+  const commandes = s.commandes.map((c) =>
+    c.id === s.activeCommandeId
+      ? { ...c, lignes: s.lignes, fichiers: s.fichiers, decisions: s.decisions, nom: s.nomCommande }
+      : c
+  );
+  return { ...s, commandes };
+}
+
+export function createCommande(nom: string, type: Commande['type'], mois?: string) {
+  if (!nom.trim()) return;
+  const s = syncActive(load());
+  const id = `cmd-${Date.now()}`;
+  const nouvelle: Commande = {
+    id, nom: nom.trim(), type, mois: mois || s.mois,
+    dateCreation: new Date().toISOString(), statut: 'en_cours',
+    lignes: [], fichiers: [], decisions: {},
+    historique: [{ date: new Date().toISOString(), action: `Commande créée : ${nom.trim()}` }],
+    etape: 'importation',
+  };
+  save({
+    ...s,
+    commandes: [...s.commandes, nouvelle],
+    activeCommandeId: id,
+    nomCommande: nom.trim(),
+    lignes: [], fichiers: [], decisions: {},
+    mois: mois || s.mois,
+  });
+}
+
+export function setActiveCommande(id: string) {
+  const s = syncActive(load());
+  const cible = s.commandes.find((c) => c.id === id);
+  if (!cible) return;
+  save({
+    ...s,
+    activeCommandeId: id,
+    nomCommande: cible.nom,
+    lignes: cible.lignes,
+    fichiers: cible.fichiers,
+    decisions: cible.decisions,
+    mois: cible.mois || s.mois,
+  });
+}
+
+export function deleteCommande(id: string) {
+  const s = load();
+  const cible = s.commandes.find((c) => c.id === id);
+  if (!cible) return false;
+  if (cible.statut === 'validee') return false; // validée par directeur : suppression interdite sans accès
+  const restantes = s.commandes.filter((c) => c.id !== id);
+  if (restantes.length === 0) return false;
+  const nextActive = s.activeCommandeId === id ? restantes[0] : s.commandes.find((c) => c.id === s.activeCommandeId)!;
+  save({
+    ...s,
+    commandes: restantes,
+    activeCommandeId: nextActive.id,
+    nomCommande: nextActive.nom,
+    lignes: nextActive.lignes,
+    fichiers: nextActive.fichiers,
+    decisions: nextActive.decisions,
+  });
+  return true;
+}
+
+export function addHistorique(action: string) {
+  const s = load();
+  const commandes = s.commandes.map((c) =>
+    c.id === s.activeCommandeId ? { ...c, historique: [...c.historique, { date: new Date().toISOString(), action }] } : c
+  );
+  save({ ...s, commandes });
 }
 
 /** Détection automatique des incohérences (même logique que la démo). */

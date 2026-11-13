@@ -2,12 +2,12 @@ import type { MenuItem } from '@/components/layout/Sidebar';
 
 /**
  * Menu FLOW VL PAVA — ordre du flux demandé :
- * Réception → Analyse → Contrôle → Règles → Validation → Factures.
+ * Importation → Analyse → Contrôle → Règles → Validation → Factures.
  * Passé en prop au Sidebar portable (aucune dépendance lib/menu).
  */
 export const PAVA_MENU: MenuItem[] = [
   { id: 'dashboard', label: 'Tableau de bord', href: '/admin' },
-  { id: 'reception', label: 'Réception', href: '/admin/reception' },
+  { id: 'reception', label: 'Importation', href: '/admin/importation' },
   { id: 'analyse', label: 'Analyse', href: '/admin/analyse' },
   { id: 'controle', label: 'Contrôle', href: '/admin/controle' },
   { id: 'regles', label: 'Règles', href: '/admin/regles' },
