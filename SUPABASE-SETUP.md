@@ -98,7 +98,31 @@ une session Admin. La gestion des comptes n'apparaît que pour l'Admin connecté
 > `jawad@acx.ma / pava2026` pour la première connexion — **change-le ensuite**
 > depuis la page Administration.
 
-## 7. Erreurs connues
+## 7. Nouveau stockage des lignes (migration 003) — IMPORTANT
+
+La base ne stocke **plus les lignes une par une** : un import de ~3 500 lignes =
+**une seule rangée** dans `pava_fichiers` (champ `contenu`), au lieu de 3 500 rangées.
+
+- `pava_commandes.stats` : totaux pré-calculés (le tableau de bord ne charge plus les lignes)
+- `pava_corrections` : les corrections/suppressions de lignes (overlay léger)
+- la table `pava_lignes` est **supprimée** par le script (les données existantes sont
+  converties dans les blobs, rien n'est perdu)
+
+**Ordre à respecter pour la mise à jour :**
+
+1. **D'ABORD** exécuter `supabase/migrations/003_lignes_blob.sql` dans le SQL Editor (base « flow »)
+2. **ENSUITE** pousser le nouveau code sur GitHub (Vercel redéploie)
+
+Si le code était déployé avant la migration, l'application répondrait une erreur
+le temps que le script 003 soit exécuté — pas de perte de données, juste l'ordre à respecter.
+
+Côté interface :
+- la page **Analyse** affiche les anomalies **50 par page** (plus de tableau géant) ;
+- boutons **« Valider les filtrées » / « Rejeter les filtrées »** pour traiter en masse ;
+- barre et cartes de **progression animées** pendant chaque chargement depuis la base ;
+- les lignes ne partent jamais de la base avec la colonne source `brut` (payload léger).
+
+## 8. Erreurs connues
 
 | Message | Cause | Solution |
 |---|---|---|

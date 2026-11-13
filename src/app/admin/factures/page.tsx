@@ -9,6 +9,8 @@
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
+import CarteChargement from '@/components/pava/CarteChargement';
+
 import { getPavaState, subscribePava, REF, setActiveCommande, deleteCommande, addVersion } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 
@@ -261,6 +263,21 @@ export default function FacturesPage() {
     const nomPdf = (snap.nomCommande || `facture-pava-${mois}`).replace(/[\\/:*?"<>|]/g, '_');
     doc.save(`${nomPdf}.pdf`);
   };
+
+  if (snap.enChargement) {
+    return (
+      <>
+        <header className="g-top g-rise">
+          <div>
+            <div className="g-kicker"><i /> VL · PAV Affaire</div>
+            <h1>Factures</h1>
+            <p className="g-lead">Chargement des commandes depuis la base…</p>
+          </div>
+        </header>
+        <CarteChargement titre="Chargement des factures…" />
+      </>
+    );
+  }
 
   if (snap.commandes.length === 0) {
     return (

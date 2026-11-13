@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Sidebar from './Sidebar';
+import BarreChargement from '../pava/BarreChargement';
 import { PAVA_MENU, PAVA_SPACE_LABEL } from '@/lib/pava-menu';
 import { getPavaState, setPavaRole, EST_MODE_DB, type Role } from '@/lib/pava-store';
 import { TITRE_ROLE, type PavaRole } from '@/lib/pava-users';
@@ -78,6 +79,7 @@ export default function RoleLayout({ children }: { children?: ReactNode }) {
             </span>
           </div>
         )}
+        <BarreChargement />
         {children}
       </main>
     </div>

@@ -108,6 +108,7 @@ export function dbToCommande(c: any): Commande {
     fichiers: (c.pava_fichiers || []).map(dbToFichier),
     decisions,
     historique: (c.pava_historique || []).map((h: any) => ({ date: h.date_action, action: h.action })),
+    stats: c.stats || undefined,
   };
 }
 

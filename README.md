@@ -71,13 +71,15 @@ La base **flow** contient aussi les tables des autres clients Flow — toutes le
 1. Ouvrir Supabase → projet de la base **flow** → **SQL Editor**.
 2. Coller le contenu de `supabase/migrations/001_pava_tables.sql` et **Run**. Le script est idempotent (relançable).
 3. Tables créées :
-   - `pava_commandes` — commandes de facture (nom obligatoire, mois, statut, étape)
-   - `pava_fichiers` — fichiers Excel/CSV importés par commande
-   - `pava_lignes` — data importés, ligne Excel d'origine conservée (`brut` JSONB), ligne de total exclue des calculs
-   - `pava_decisions` — décisions sur incohérences, uniques par (commande, réf) pour ne pas re-flagger
+   - `pava_commandes` — commandes de facture (nom obligatoire, mois, statut, étape, totaux pré-calculés `stats`)
+   - `pava_fichiers` — fichiers Excel/CSV importés par commande, **toutes les lignes dans un seul champ JSON `contenu`** (migration 003 : plus de table ligne-par-ligne qui gonflait la base de ~3 500 rangées par commande)
+   - `pava_corrections` — retouches/suppressions de lignes (overlay léger, une rangée par ligne réellement corrigée)
+   - `pava_decisions` — décisions sur incohérences, uniques par (commande, réf) pour ne pas re-flagger ; **valider/rejeter en masse** (POST)
    - `pava_historique` — historique de chaque modification sur la commande
    - `pava_params` — Price Plan et paramètres de règles éditables (une ligne globale + une par commande)
    - `pava_versions` — version du fichier Excel à chaque étape (bucket Storage `pava-exports`)
+   - `pava_utilisateurs` — comptes d'accès (migration 002 : mots de passe hashés scrypt, gérés depuis la page Administration)
+   Les lignes d'une commande sont chargées **à la demande** (GET /commandes/[id]/lignes) : le state global reste léger et la page Analyse pagine par 50.
 4. RLS activé sur toutes les tables sans policy : seul le serveur (SERVICE_ROLE_KEY) y accède pour l'instant ; contrôle d'accès fin plus tard.
 5. Règle métier : une commande `validee` (Directeur) ne peut **pas** être supprimée (trigger SQL).
 6. Renseigner `.env.local` (voir `.env.example`) : `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.

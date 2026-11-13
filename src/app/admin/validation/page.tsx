@@ -7,6 +7,8 @@
 
 import { useMemo, useSyncExternalStore } from 'react';
 import Link from 'next/link';
+import CarteChargement from '@/components/pava/CarteChargement';
+
 import { getPavaState, subscribePava, setStatutFacture } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 
@@ -42,6 +44,8 @@ export default function ValidationPage() {
           </span>
         </div>
       </header>
+
+      {snap.enChargement && <CarteChargement titre="Chargement de la validation…" texte="Les lignes de la commande sont récupérées pour calculer les totaux à valider." />}
 
       <section className="g-hero g-glass g-rise">
         <div>

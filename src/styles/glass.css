@@ -722,3 +722,17 @@ body.g-body.g-body .header p{color:var(--g-muted)}
 @media (prefers-reduced-motion:reduce){
   .g-body *,.g-body *::before,.g-body *::after{animation-duration:.001s!important;transition-duration:.001s!important}
 }
+
+/* ---------- 24. Progression / chargement ---------- */
+.g-loadbar{position:relative;height:7px;border-radius:99px;background:rgba(37,99,235,.13);overflow:hidden}
+.g-loadbar i{position:absolute;top:0;bottom:0;left:-38%;width:38%;border-radius:99px;
+  background:linear-gradient(90deg,var(--g-blue,#2563eb),var(--g-cyan,#06b6d4));
+  animation:g-load 1.15s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes g-load{0%{left:-38%}100%{left:100%}}
+.g-loadspin{display:inline-block;width:20px;height:20px;border-radius:50%;flex:none;
+  border:2.5px solid rgba(37,99,235,.18);border-top-color:var(--g-blue,#2563eb);
+  animation:g-spin .8s linear infinite}
+@keyframes g-spin{to{transform:rotate(360deg)}}
+.g-btn[disabled]{opacity:.55;cursor:wait}
+.g-pager{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:10px 0}
+.g-pager b{font-size:12.5px}

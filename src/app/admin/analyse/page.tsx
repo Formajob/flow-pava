@@ -8,9 +8,10 @@
  * Calculs déterministes (moteur), jamais par LLM.
  */
 
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { getPavaState, subscribePava, setDecision, updateLigne, deleteLigne, setActiveCommande, addHistorique, addVersion, setEtapeCommande } from '@/lib/pava-store';
+import CarteChargement from '@/components/pava/CarteChargement';
+import { getPavaState, subscribePava, setDecision, setDecisionsBulk, updateLigne, deleteLigne, setActiveCommande, addHistorique, addVersion, setEtapeCommande } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 import type { Anomaly, StatutAnomalie } from '@/lib/pava/types';
 
@@ -36,6 +37,9 @@ export default function AnalysePage() {
   const [filtreStatut, setFiltreStatut] = useState('');
   const [correction, setCorrection] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(1);
+  const [exportEnCours, setExportEnCours] = useState(false);
+  const [bulkEnCours, setBulkEnCours] = useState(false);
 
   const lignesNorm = useMemo(
     () => depuisDemo(snap.lignes as unknown as Array<Record<string, unknown>>, snap.mois),
@@ -66,6 +70,25 @@ export default function AnalysePage() {
       (!filtreFamille || a.famille === filtreFamille) &&
       (!filtreStatut || a.statut === filtreStatut)
   );
+
+  // Pagination : le tableau n'affiche que 50 lignes à la fois — jamais
+  // des milliers de rangées d'un coup (page figée sinon).
+  const PAR_PAGE = 50;
+  useEffect(() => setPage(1), [filtreRegle, filtreConfiance, filtreFamille, filtreStatut]);
+  const nbPages = Math.max(1, Math.ceil(affichees.length / PAR_PAGE));
+  const pageActive = Math.min(page, nbPages);
+  const pageAffichee = affichees.slice((pageActive - 1) * PAR_PAGE, pageActive * PAR_PAGE);
+
+  /** Valider / rejeter en masse toutes les anomalies du filtre courant. */
+  const traiterEnMasse = async (statut: Exclude<StatutAnomalie, 'ouvert'>) => {
+    const refs = affichees.map((a) => a.id);
+    if (refs.length === 0) return;
+    const verbe = statut === 'valide' ? 'valider' : 'rejeter';
+    if (!confirm(`${verbe.charAt(0).toUpperCase() + verbe.slice(1)} les ${refs.length} anomalie(s) affichée(s) par le filtre ?`)) return;
+    setBulkEnCours(true);
+    await setDecisionsBulk(refs, statut);
+    setBulkEnCours(false);
+  };
 
   const setStatut = (id: string, statut: StatutAnomalie) => {
     const next = { ...decisions, [id]: statut };
@@ -108,6 +131,15 @@ export default function AnalysePage() {
   };
 
   const exporter = async () => {
+    setExportEnCours(true);
+    try {
+      await exporterCorps();
+    } finally {
+      setExportEnCours(false);
+    }
+  };
+
+  const exporterCorps = async () => {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     // Onglet Synthèse
@@ -157,13 +189,20 @@ export default function AnalysePage() {
               <option key={c.id} value={c.id}>{c.nom}</option>
             ))}
           </select>
-          <button type="button" className="g-btn" onClick={() => { void addHistorique('Analyse lancée'); void setEtapeCommande('analyse'); void exporter(); }}>
-            Lancer l&apos;analyse + Exporter xlsx
+          <button type="button" className="g-btn" disabled={exportEnCours} onClick={() => { void addHistorique('Analyse lancée'); void setEtapeCommande('analyse'); void exporter(); }}>
+            {exportEnCours ? 'Génération du fichier…' : "Lancer l'analyse + Exporter xlsx"}
           </button>
           <Link className="g-btn g-btn--ghost" href="/admin/importation">Importer</Link>
         </div>
       </header>
 
+      {snap.enChargement ? (
+        <CarteChargement
+          titre="Analyse en cours — chargement des lignes…"
+          texte="Les lignes de la commande sont récupérées depuis la base, puis recalculées par le moteur (montants attendus, règles R01–R13)."
+        />
+      ) : (
+      <>
       <section className="g-kpis" aria-label="Synthèse">
         <article className="g-kpi g-glass g-rise">
           <div className="g-kpi-top"><span className="g-kpi-ico" /></div>
@@ -272,6 +311,26 @@ export default function AnalysePage() {
         {affichees.length === 0 ? (
           <p className="g-empty">Aucune anomalie avec ces filtres.</p>
         ) : (
+          <>
+          <div className="g-pager">
+            <b>
+              {affichees.length.toLocaleString('fr-FR')} anomalie(s) · page {pageActive} / {nbPages} · 50 par page
+            </b>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" className="g-btn g-btn--sm" disabled={bulkEnCours} onClick={() => void traiterEnMasse('valide')}>
+                {bulkEnCours ? 'Traitement…' : `Valider les ${affichees.length.toLocaleString('fr-FR')} filtrées`}
+              </button>
+              <button type="button" className="g-btn g-btn--ghost g-btn--sm" disabled={bulkEnCours} onClick={() => void traiterEnMasse('rejete')}>
+                Rejeter les filtrées
+              </button>
+              <button type="button" className="g-btn g-btn--ghost g-btn--sm" disabled={pageActive <= 1} onClick={() => setPage(pageActive - 1)}>
+                ‹ Précédent
+              </button>
+              <button type="button" className="g-btn g-btn--ghost g-btn--sm" disabled={pageActive >= nbPages} onClick={() => setPage(pageActive + 1)}>
+                Suivant ›
+              </button>
+            </div>
+          </div>
           <div className="g-table-wrap">
             <table className="g-table">
               <thead>
@@ -287,7 +346,7 @@ export default function AnalysePage() {
                 </tr>
               </thead>
               <tbody>
-                {affichees.map((a) => (
+                {pageAffichee.map((a) => (
                   <tr key={a.id}>
                     <td>
                       <span className="g-ref">{a.id}</span>
@@ -317,6 +376,7 @@ export default function AnalysePage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
         <div className="g-card-foot">
           <span>{affichees.length} affichées sur {anomalies.length}</span>
@@ -388,6 +448,8 @@ export default function AnalysePage() {
           <span>Total recalculé : {resultat.totalRecalcule.toLocaleString('fr-FR')} $</span>
         </div>
       </section>
+      </>
+      )}
     </>
   );
 }

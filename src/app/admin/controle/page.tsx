@@ -10,6 +10,7 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { getPavaState, subscribePava, setDecision, updateLigne, deleteLigne } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
+import CarteChargement from '@/components/pava/CarteChargement';
 
 export default function ControlePage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
@@ -84,6 +85,8 @@ export default function ControlePage() {
           <p className="g-lead">Prenez action sur les incohérences restantes : ignorez avec commentaire, ou corrigez la ligne.</p>
         </div>
       </header>
+
+      {snap.enChargement && <CarteChargement titre="Chargement du contrôle…" texte="Les lignes de la commande sont récupérées puis passées dans les règles R01–R13." />}
 
       <section className="g-kpis">
         <article className="g-kpi g-glass g-rise">

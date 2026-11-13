@@ -8,6 +8,8 @@
  */
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import CarteChargement from '@/components/pava/CarteChargement';
+import { fusionnerStats, STATS_VIDES, type StatsCommande } from '@/lib/pava/stats';
 import Link from 'next/link';
 import { getPavaState, subscribePava } from '@/lib/pava-store';
 
@@ -44,42 +46,41 @@ export default function AdminDashboardPage() {
   const canSee = snap.role === 'admin' || snap.role === 'directeur';
   const montant = (n: number) => (canSee ? `${fmt(n)} $` : 'Masqué');
 
-  // Lignes affichées : toutes les commandes (global) ou la commande choisie.
-  const lignes = useMemo(() => {
-    if (filtre === 'toutes') return snap.commandes.flatMap((c) => c.lignes);
-    return snap.commandes.find((c) => c.id === filtre)?.lignes ?? [];
-  }, [snap.commandes, filtre]);
-
+  // Stats pré-calculées (mode base : pava_commandes.stats) — le tableau de bord
+  // n'a plus besoin de charger les ~3 500 lignes de chaque commande.
   const commandeActive = snap.commandes.find((c) => c.id === filtre);
+
+  const stats: StatsCommande = useMemo(
+    () =>
+      filtre === 'toutes'
+        ? fusionnerStats(snap.commandes.map((c) => c.stats || STATS_VIDES))
+        : commandeActive?.stats || STATS_VIDES,
+    [snap.commandes, filtre, commandeActive]
+  );
 
   const totaux = useMemo<Totaux>(() => {
     const t = JSON.parse(JSON.stringify(TOTAUX_VIDES)) as Totaux;
-    for (const l of lignes) {
-      if (l.incomplet) continue;
-      const m = (l.montantCalcule ?? 0) + (l.ajustement || 0);
-      t[l.categorie as keyof Totaux].n += l.quantite;
-      t[l.categorie as keyof Totaux].m += m;
-      t.TOTAL.n += l.quantite;
-      t.TOTAL.m += m;
+    for (const [cat, v] of Object.entries(stats.parCategorie || {})) {
+      if (!(cat in t)) continue;
+      t[cat as keyof Totaux].n += v.n;
+      t[cat as keyof Totaux].m += v.m;
+      t.TOTAL.n += v.n;
+      t.TOTAL.m += v.m;
     }
     return t;
-  }, [lignes]);
+  }, [stats]);
 
-  const incoherences = useMemo(
-    () => lignes.filter((l) => l.incomplet || l.incoherence),
-    [lignes]
-  );
+  const nbIncoherences = stats.nbIncoherences || 0;
 
-  // Par commande : montant + statut (vue globale)
+  // Par commande : montant + statut (vue globale, depuis les stats)
   const parCommande = useMemo(
     () =>
       snap.commandes.map((c) => {
-        const m = c.lignes.reduce(
-          (s, l) => (l.incomplet ? s : s + (l.montantCalcule ?? 0) + (l.ajustement || 0)),
-          0
-        );
-        const inco = c.lignes.filter((l) => l.incomplet || l.incoherence).length;
-        return { id: c.id, nom: c.nom, statut: c.statut, lignes: c.lignes.length, montant: m, inco };
+        const st = c.stats || STATS_VIDES;
+        return {
+          id: c.id, nom: c.nom, statut: c.statut,
+          lignes: st.nbLignes, montant: st.totalCalcule, inco: st.nbIncoherences,
+        };
       }),
     [snap.commandes]
   );
@@ -138,6 +139,10 @@ export default function AdminDashboardPage() {
         </div>
       </header>
 
+      {snap.enChargement && (
+        <CarteChargement titre="Chargement du tableau de bord…" texte="Les totaux de chaque commande sont récupérés depuis la base (sans charger les lignes)." />
+      )}
+
       <section className="g-hero g-glass g-rise" style={{ ['--d' as string]: '.06s' }}>
         <div>
           <div className="g-kicker"><i /> {filtre === 'toutes' ? `Vue globale · ${snap.commandes.length} commandes` : commandeActive?.statut === 'validee' ? 'Facture validée' : 'Facture en cours'}</div>
@@ -167,7 +172,7 @@ export default function AdminDashboardPage() {
           </div>
         </div>
         <div className="g-hero-side">
-          <b className="g-num">{incoherences.length}</b>
+          <b className="g-num">{nbIncoherences.toLocaleString('fr-FR')}</b>
           <span>incohérences</span>
           <small>{filtre === 'toutes' ? `${nbEnCours} en cours` : (commandeActive?.mois || '')}</small>
         </div>
@@ -207,9 +212,9 @@ export default function AdminDashboardPage() {
                 <path d="M12 3 2 21h20L12 3z" /><path d="M12 10v4M12 17h.01" />
               </svg>
             </span>
-            <span className={`g-delta ${incoherences.length ? 'is-warn' : 'is-ok'}`}>{incoherences.length ? 'à valider' : 'aucune'}</span>
+            <span className={`g-delta ${nbIncoherences ? 'is-warn' : 'is-ok'}`}>{nbIncoherences ? 'à valider' : 'aucune'}</span>
           </div>
-          <b className="g-value g-num" style={{ color: incoherences.length ? 'var(--g-bad)' : undefined }}>{incoherences.length}</b>
+          <b className="g-value g-num" style={{ color: nbIncoherences ? 'var(--g-bad)' : undefined }}>{nbIncoherences.toLocaleString('fr-FR')}</b>
           <span className="g-label">Incohérences à valider</span>
         </article>
 
@@ -265,23 +270,23 @@ export default function AdminDashboardPage() {
           <div className="g-card-head">
             <div>
               <h3 className="g-card-title">Incohérences</h3>
-              <p className="g-card-sub">À valider avant la facture. Chaque ligne indique sa référence Excel.</p>
+              <p className="g-card-sub">À valider avant la facture — par commande, depuis les totaux pré-calculés.</p>
             </div>
             <Link className="g-btn g-btn--ghost g-btn--sm" href="/admin/analyse">Tout voir</Link>
           </div>
-          {incoherences.length === 0 ? (
+          {nbIncoherences === 0 ? (
             <p className="g-empty">Aucune incohérence.</p>
           ) : (
             <ul className="g-list">
-              {incoherences.slice(0, 6).map((l) => (
-                <li key={l.id}>
+              {parCommande.filter((c) => c.inco > 0).slice(0, 6).map((c) => (
+                <li key={c.id}>
                   <div className="g-list-item">
                     <span className="g-list-main">
-                      <b>{l.id} · {l.compte ? `Compte ${l.compte}` : '—'}</b>
-                      <span>{l.incoherence || l.incomplet}</span>
+                      <b>{c.nom}</b>
+                      <span>{c.lignes.toLocaleString('fr-FR')} lignes · {c.statut === 'validee' ? 'Validée' : c.statut === 'valide_admin' ? 'Validée Admin' : 'En cours'}</span>
                     </span>
                     <span className="g-list-side">
-                      <span className={`g-badge ${l.incomplet ? 'is-warn' : 'is-bad'}`}><i className="g-dot" />{l.incomplet ? 'Incomplet' : 'Incohérence'}</span>
+                      <span className="g-badge is-warn"><i className="g-dot" />{c.inco.toLocaleString('fr-FR')}</span>
                     </span>
                   </div>
                 </li>
@@ -289,7 +294,7 @@ export default function AdminDashboardPage() {
             </ul>
           )}
           <div className="g-card-foot">
-            <span><b className="g-num">{incoherences.length}</b> à valider</span>
+            <span><b className="g-num">{nbIncoherences.toLocaleString('fr-FR')}</b> à valider</span>
             <span>Analyse détaillée en page Analyse</span>
           </div>
         </article>
@@ -359,12 +364,12 @@ export default function AdminDashboardPage() {
       <section className="g-card g-glass g-rise" style={{ ['--d' as string]: '.31s' }}>
         <div className="g-card-head">
           <div>
-            <h3 className="g-card-title">Lignes · {filtre === 'toutes' ? 'toutes commandes' : commandeActive?.nom} · {lignes.length}</h3>
-            <p className="g-card-sub">Référence, compte, produit, catégorie et montant. Montants masqués pour l&apos;Analyste.</p>
+            <h3 className="g-card-title">Lignes · commande active · {snap.nomCommande || '—'} · {snap.lignes.length}</h3>
+            <p className="g-card-sub">Aperçu des 20 premières lignes de la commande consultée (chargées à la demande). Montants masqués pour l&apos;Analyste.</p>
           </div>
         </div>
-        {lignes.length === 0 ? (
-          <p className="g-empty">Aucune ligne pour cette sélection.</p>
+        {snap.lignes.length === 0 ? (
+          <p className="g-empty">{snap.enChargement ? 'Chargement des lignes…' : 'Aucune ligne — importez un fichier en page Importation.'}</p>
         ) : (
           <div className="g-table-wrap">
             <table className="g-table">
@@ -378,7 +383,7 @@ export default function AdminDashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {lignes.slice(0, 20).map((l) => (
+                {snap.lignes.slice(0, 20).map((l) => (
                   <tr key={l.id}>
                     <td><span className="g-ref">{l.id}</span></td>
                     <td>{l.compte ? `Compte ${l.compte}` : '—'}</td>
@@ -392,7 +397,7 @@ export default function AdminDashboardPage() {
           </div>
         )}
         <div className="g-card-foot">
-          <span>{lignes.length} lignes · {montant(totaux.TOTAL.m)}</span>
+          <span>{snap.lignes.length.toLocaleString('fr-FR')} lignes · {montant(totaux.TOTAL.m)}</span>
           <span>Le détail complet est sur la page Factures</span>
         </div>
       </section>

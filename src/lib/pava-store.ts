@@ -16,6 +16,7 @@
  */
 
 import type { PavaParams } from './pava/types';
+import type { StatsCommande } from './pava/stats';
 import { DEFAULT_PARAMS } from './pava/types';
 
 export type Role = 'analyste' | 'admin' | 'directeur';
@@ -76,6 +77,8 @@ export interface Commande {
   decisions: Record<string, Decision>;
   historique: HistoriqueEntree[];
   etape: string;
+  /** Totaux pré-calculés (mode base) — le tableau de bord n'a pas besoin des lignes. */
+  stats?: StatsCommande;
 }
 
 export interface PavaState {
@@ -344,8 +347,32 @@ async function chargerEtat(): Promise<void> {
     const r = await api<{ commandes: Commande[]; params: PavaParams }>('/state');
     effacerErreur();
     dbState = assembler(r.commandes, r.params);
+    emit();
+    // Les ~3 500 lignes ne sont chargées QUE pour la commande consultée.
+    void chargerLignesCmd(dbState.activeCommandeId);
   } catch (e) {
     dbState = etatVide();
+    noterErreur(e);
+  }
+}
+
+/** Commandes dont les lignes sont déjà en mémoire (chargement à la demande). */
+const lignesChargees = new Set<string>();
+
+/** Charge les lignes d'UNE commande (blob + corrections) avec indicateur visible. */
+async function chargerLignesCmd(id: string, force = false): Promise<void> {
+  if (!id || (!force && lignesChargees.has(id))) return;
+  if (!etatDb().commandes.some((c) => c.id === id)) return;
+  dbState = { ...etatDb(), enChargement: true };
+  emit();
+  try {
+    const r = await api<{ lignes: PavaLigne[] }>(`/commandes/${id}/lignes`);
+    lignesChargees.add(id);
+    const commandes = etatDb().commandes.map((c) => (c.id === id ? { ...c, lignes: r.lignes } : c));
+    effacerErreur();
+    dbState = { ...assembler(commandes, etatDb().params), enChargement: false };
+  } catch (e) {
+    dbState = { ...etatDb(), enChargement: false };
     noterErreur(e);
     return;
   }
@@ -363,6 +390,7 @@ async function dbCreateCommande(nom: string, mois?: string): Promise<boolean> {
   try {
     const c = await api<Commande>('/commandes', { method: 'POST', body: JSON.stringify({ nom, mois: m }) });
     ecrirePrefs({ ...p, mois: m, activeCommandeId: c.id });
+    lignesChargees.add(c.id); // nouvelle commande : aucune ligne à charger
     effacerErreur();
     dbState = assembler([...etatDb().commandes, c], etatDb().params);
     emit();
@@ -380,6 +408,7 @@ function dbSetActiveCommande(id: string) {
   ecrirePrefs({ ...lirePrefs(), activeCommandeId: id, mois: cible.mois || lirePrefs().mois });
   dbState = assembler(s.commandes, s.params);
   emit();
+  void chargerLignesCmd(id);
 }
 
 async function dbDeleteCommande(id: string): Promise<boolean> {
@@ -431,12 +460,18 @@ async function dbAddImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[]):
 
 async function dbUpdateLigne(id: string, patch: Partial<PavaLigne>): Promise<boolean> {
   const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) return false;
   try {
-    const maj = await api<PavaLigne>(`/lignes/${id}`, { method: 'PATCH', body: JSON.stringify({ patch }) });
-    const commandes = s.commandes.map((c) => ({
-      ...c,
-      lignes: c.lignes.map((l) => (l.id === id ? { ...l, ...maj } : l)),
-    }));
+    const r = await api<{ ligne: PavaLigne | null; stats: StatsCommande }>(
+      `/commandes/${idCmd}/lignes/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify({ patch }) }
+    );
+    const commandes = s.commandes.map((c) =>
+      c.id === idCmd
+        ? { ...c, stats: r.stats, lignes: c.lignes.map((l) => (l.id === id && r.ligne ? r.ligne : l)) }
+        : c
+    );
     effacerErreur();
     dbState = assembler(commandes, s.params);
     emit();
@@ -449,9 +484,18 @@ async function dbUpdateLigne(id: string, patch: Partial<PavaLigne>): Promise<boo
 
 async function dbDeleteLigne(id: string): Promise<boolean> {
   const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) return false;
   try {
-    await api(`/lignes/${id}`, { method: 'DELETE' });
-    const commandes = s.commandes.map((c) => ({ ...c, lignes: c.lignes.filter((l) => l.id !== id) }));
+    const r = await api<{ ok: boolean; stats: StatsCommande }>(
+      `/commandes/${idCmd}/lignes/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+    const commandes = s.commandes.map((c) =>
+      c.id === idCmd
+        ? { ...c, stats: r.stats, lignes: c.lignes.filter((l) => l.id !== id) }
+        : c
+    );
     effacerErreur();
     dbState = assembler(commandes, s.params);
     emit();
@@ -488,6 +532,27 @@ async function dbSetDecision(anomalyId: string, decision: Decision): Promise<boo
     const commandes = s.commandes.map((c) =>
       c.id === idCmd ? { ...c, decisions: { ...c.decisions, [anomalyId]: decision } } : c
     );
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+/** Décisions en masse : un seul appel pour des centaines d'anomalies. */
+async function dbSetDecisionsBulk(refs: string[], statut: string): Promise<boolean> {
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd || refs.length === 0) return false;
+  try {
+    await api(`/commandes/${idCmd}/decisions`, { method: 'POST', body: JSON.stringify({ refs, statut }) });
+    const cible = s.commandes.find((c) => c.id === idCmd);
+    const decisions = { ...(cible?.decisions || {}) };
+    for (const r of refs) decisions[r] = { statut: statut as Decision['statut'], commentaire: decisions[r]?.commentaire || '' };
+    const commandes = s.commandes.map((c) => (c.id === idCmd ? { ...c, decisions } : c));
     effacerErreur();
     dbState = assembler(commandes, s.params);
     emit();
@@ -645,6 +710,16 @@ export function setDecision(anomalyId: string, decision: Decision): Promise<bool
   return true;
 }
 
+/** Décisions en masse (valider/rejeter tout un filtre d'un coup). */
+export function setDecisionsBulk(refs: string[], statut: string): Promise<boolean> | boolean {
+  if (DB_MODE) return dbSetDecisionsBulk(refs, statut);
+  const s = load();
+  const decisions = { ...s.decisions };
+  for (const r of refs) decisions[r] = { statut: statut as Decision['statut'], commentaire: decisions[r]?.commentaire || '' };
+  save({ ...s, decisions });
+  return true;
+}
+
 export function setStatutFacture(mois: string, statut: string): Promise<boolean> | boolean {
   if (DB_MODE) return dbSetStatutFacture(mois, statut);
   const s = load();
@@ -761,7 +836,10 @@ export function reinitialiserDemo() {
 
 /** Recharger l'état depuis la base (bouton « Rafraîchir »). */
 export function refreshPava(): Promise<void> | void {
-  if (DB_MODE) return chargerEtat();
+  if (DB_MODE) {
+    lignesChargees.clear();
+    return chargerEtat();
+  }
 }
 
 /** Détection automatique des incohérences (même logique que la démo). */
