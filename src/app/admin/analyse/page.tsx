@@ -10,7 +10,7 @@
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { getPavaState, subscribePava, setDecision, updateLigne, deleteLigne, setActiveCommande, addHistorique } from '@/lib/pava-store';
+import { getPavaState, subscribePava, setDecision, updateLigne, deleteLigne, setActiveCommande, addHistorique, addVersion, setEtapeCommande } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 import type { Anomaly, StatutAnomalie } from '@/lib/pava/types';
 
@@ -134,7 +134,10 @@ export default function AnalysePage() {
       Payé: l.paiement_pav, Attendu: l.montant_attendu, Écart: l.ecart,
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(lignes), 'Lignes recalculées');
-    XLSX.writeFile(wb, `rapport-pava-${snap.mois}.xlsx`);
+    const nomFichier = (snap.nomCommande || `rapport-pava-${snap.mois}`).replace(/[\\/:*?"<>|]/g, '_');
+    XLSX.writeFile(wb, `${nomFichier}.xlsx`);
+    // Version tracée dans la base — nommée d'après la commande
+    void addVersion('analyse', `${nomFichier}.xlsx`, resultat.lignes.length, resultat.totalRecalcule);
   };
 
   return (
@@ -154,7 +157,7 @@ export default function AnalysePage() {
               <option key={c.id} value={c.id}>{c.nom}</option>
             ))}
           </select>
-          <button type="button" className="g-btn" onClick={() => { addHistorique('Analyse lancée'); exporter(); }}>
+          <button type="button" className="g-btn" onClick={() => { void addHistorique('Analyse lancée'); void setEtapeCommande('analyse'); void exporter(); }}>
             Lancer l&apos;analyse + Exporter xlsx
           </button>
           <Link className="g-btn g-btn--ghost" href="/admin/importation">Importer</Link>

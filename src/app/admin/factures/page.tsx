@@ -8,13 +8,21 @@
  */
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import { getPavaState, subscribePava, REF, setActiveCommande, deleteCommande } from '@/lib/pava-store';
+import { getPavaState, subscribePava, REF, setActiveCommande, deleteCommande, addVersion } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 
-const MOIS = [
+const MOIS_DEMO = [
   { id: '2026-09', label: 'Septembre 2026' },
   { id: '2026-10', label: 'Octobre 2026' },
 ];
+
+const MOIS_C = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+
+function libelleMois(id: string) {
+  const [a, m] = id.split('-');
+  const idx = Number(m) - 1;
+  return MOIS_C[idx] ? `${MOIS_C[idx]} ${a}` : id;
+}
 
 const COULEURS: Record<string, string> = {
   CAB: '#2563eb', CELL: '#0891b2', NUM: '#7c3aed', REDO: '#0ea5e9',
@@ -28,7 +36,17 @@ function fmt(n: number) {
 
 export default function FacturesPage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
-  const [mois, setMois] = useState('2026-09');
+  // Mois proposés : ceux des commandes (DB) + les mois démo si vide
+  const MOIS = (() => {
+    const ids = [...new Set(snap.commandes.map((c) => c.mois).filter(Boolean))] as string[];
+    if (ids.length > 0) {
+      return ids.sort().reverse().map((id) => ({ id, label: libelleMois(id) }));
+    }
+    return MOIS_DEMO;
+  })();
+  const moisDefaut = snap.commandes.find((c) => c.id === snap.activeCommandeId)?.mois || MOIS[0]?.id || '';
+  const [moisChoisi, setMoisChoisi] = useState('');
+  const mois = moisChoisi || moisDefaut;
 
   const lignesNorm = useMemo(
     () => depuisDemo(snap.lignes.filter((l) => l.mois === mois) as unknown as Array<Record<string, unknown>>, mois),
@@ -122,7 +140,9 @@ export default function FacturesPage() {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(refRows), 'Référence');
     }
 
-    XLSX.writeFile(wb, `facture-pava-${mois}.xlsx`);
+    const nomFichier = (snap.nomCommande || `facture-pava-${mois}`).replace(/[\\/:*?"<>|]/g, '_');
+    XLSX.writeFile(wb, `${nomFichier}.xlsx`);
+    void addVersion('factures', `${nomFichier}.xlsx`, resultat.lignes.length, resultat.totalRecalcule);
   };
 
   const exporterPdf = async () => {
@@ -237,7 +257,8 @@ export default function FacturesPage() {
       alternateRowStyles: { fillColor: [238, 242, 251] },
     });
 
-    doc.save(`facture-pava-${mois}.pdf`);
+    const nomPdf = (snap.nomCommande || `facture-pava-${mois}`).replace(/[\\/:*?"<>|]/g, '_');
+    doc.save(`${nomPdf}.pdf`);
   };
 
   return (
@@ -249,7 +270,7 @@ export default function FacturesPage() {
           <p className="g-lead">Toutes les commandes de facturation : facture du mois, ancienne facture à valider, test, suivi de production.</p>
         </div>
         <div className="g-tools">
-          <select className="g-chip" aria-label="Mois" value={mois} onChange={(e) => setMois(e.target.value)}>
+          <select className="g-chip" aria-label="Mois" value={mois} onChange={(e) => setMoisChoisi(e.target.value)}>
             {MOIS.map((m) => (
               <option key={m.id} value={m.id}>{m.label} · {snap.statutFacture[m.id] === 'validee' ? 'Validée' : 'En cours'}</option>
             ))}
@@ -327,7 +348,7 @@ export default function FacturesPage() {
               <div className="g-list-item">
                 <span className="g-list-main">
                   <b>{c.nom}</b>
-                  <span>{c.type} · {c.lignes.length} lignes · {c.historique.length} entrées d&apos;historique</span>
+                  <span>{c.lignes.length} lignes · {c.historique.length} entrées d&apos;historique</span>
                 </span>
                 <span className="g-list-side" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <span className={`g-badge ${c.statut === 'validee' ? 'is-ok' : c.statut === 'valide_admin' ? 'is-info' : 'is-warn'}`}><i className="g-dot" />{c.statut === 'validee' ? 'Validée' : c.statut === 'valide_admin' ? 'Validée Admin' : 'En cours'}</span>
@@ -337,9 +358,9 @@ export default function FacturesPage() {
                     className="g-btn g-btn--ghost g-btn--sm"
                     disabled={c.statut === 'validee'}
                     title={c.statut === 'validee' ? 'Validée par le Directeur : suppression interdite sans accès' : 'Supprimer'}
-                    onClick={() => {
+                    onClick={async () => {
                       if (!confirm(`Supprimer la commande « ${c.nom} » ?`)) return;
-                      const ok = deleteCommande(c.id);
+                      const ok = await deleteCommande(c.id);
                       if (!ok) alert('Suppression impossible : facture validée par le Directeur.');
                     }}
                   >

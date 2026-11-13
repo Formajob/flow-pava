@@ -2,19 +2,31 @@
 
 /**
  * Tableau de bord PAVA — habillage Glassy V22 (classes g-).
- * Même logique que la démo : chiffres lus dans le store, jamais en constante.
- * Septembre validée, octobre en cours. L'Analyste ne voit pas les montants.
+ * Vue globale sur toutes les commandes + filtre par commande traitée.
+ * Chiffres lus dans le store, jamais en constante. L'Analyste ne voit
+ * pas les montants.
  */
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { getPavaState, subscribePava } from '@/lib/pava-store';
 
-const MOIS_C = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
-
 function fmt(n: number) {
   return Number(n || 0).toLocaleString('fr-FR');
 }
+
+type Totaux = {
+  AJOUT: { n: number; m: number };
+  RENOUVELLEMENT: { n: number; m: number };
+  SACA: { n: number; m: number };
+  NON_FACTUREE: { n: number; m: number };
+  TOTAL: { n: number; m: number };
+};
+
+const TOTAUX_VIDES: Totaux = {
+  AJOUT: { n: 0, m: 0 }, RENOUVELLEMENT: { n: 0, m: 0 }, SACA: { n: 0, m: 0 },
+  NON_FACTUREE: { n: 0, m: 0 }, TOTAL: { n: 0, m: 0 },
+};
 
 export default function AdminDashboardPage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
@@ -26,23 +38,27 @@ export default function AdminDashboardPage() {
     const t = setInterval(() => setToday(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);
-  const [mois, setMois] = useState(snap.mois || '2026-10');
+  const [filtre, setFiltre] = useState<string>('toutes');
 
   const longDate = today.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const canSee = snap.role === 'admin' || snap.role === 'directeur';
   const montant = (n: number) => (canSee ? `${fmt(n)} $` : 'Masqué');
 
-  const lignes = useMemo(
-    () => snap.lignes.filter((l) => (l.mois || snap.mois) === mois),
-    [snap.lignes, snap.mois, mois]
-  );
-  const totaux = useMemo(() => {
-    const t = { AJOUT: { n: 0, m: 0 }, RENOUVELLEMENT: { n: 0, m: 0 }, SACA: { n: 0, m: 0 }, NON_FACTUREE: { n: 0, m: 0 }, TOTAL: { n: 0, m: 0 } };
+  // Lignes affichées : toutes les commandes (global) ou la commande choisie.
+  const lignes = useMemo(() => {
+    if (filtre === 'toutes') return snap.commandes.flatMap((c) => c.lignes);
+    return snap.commandes.find((c) => c.id === filtre)?.lignes ?? [];
+  }, [snap.commandes, filtre]);
+
+  const commandeActive = snap.commandes.find((c) => c.id === filtre);
+
+  const totaux = useMemo<Totaux>(() => {
+    const t = JSON.parse(JSON.stringify(TOTAUX_VIDES)) as Totaux;
     for (const l of lignes) {
       if (l.incomplet) continue;
       const m = (l.montantCalcule ?? 0) + (l.ajustement || 0);
-      t[l.categorie as keyof typeof t].n += l.quantite;
-      t[l.categorie as keyof typeof t].m += m;
+      t[l.categorie as keyof Totaux].n += l.quantite;
+      t[l.categorie as keyof Totaux].m += m;
       t.TOTAL.n += l.quantite;
       t.TOTAL.m += m;
     }
@@ -50,11 +66,27 @@ export default function AdminDashboardPage() {
   }, [lignes]);
 
   const incoherences = useMemo(
-    () => snap.lignes.filter((l) => (l.mois || snap.mois) === mois && (l.incomplet || l.incoherence)),
-    [snap.lignes, snap.mois, mois]
+    () => lignes.filter((l) => l.incomplet || l.incoherence),
+    [lignes]
+  );
+
+  // Par commande : montant + statut (vue globale)
+  const parCommande = useMemo(
+    () =>
+      snap.commandes.map((c) => {
+        const m = c.lignes.reduce(
+          (s, l) => (l.incomplet ? s : s + (l.montantCalcule ?? 0) + (l.ajustement || 0)),
+          0
+        );
+        const inco = c.lignes.filter((l) => l.incomplet || l.incoherence).length;
+        return { id: c.id, nom: c.nom, statut: c.statut, lignes: c.lignes.length, montant: m, inco };
+      }),
+    [snap.commandes]
   );
 
   const maxCat = Math.max(1, totaux.AJOUT.m, totaux.RENOUVELLEMENT.m);
+  const maxCmd = Math.max(1, ...parCommande.map((c) => c.montant));
+  const nbEnCours = snap.commandes.filter((c) => c.statut !== 'validee').length;
 
   if (!mounted) {
     return (
@@ -86,8 +118,8 @@ export default function AdminDashboardPage() {
           <div className="g-kicker"><i /> VL · PAVA Affaire</div>
           <h1>Tableau de bord</h1>
           <p className="g-lead">
-            Facturation mensuelle Videotron PAV Affaire. Septembre validée, octobre en cours.
-            L&apos;Analyste importe et analyse sans voir les montants finaux.
+            Facturation Videotron PAV Affaire par commandes. Calculs globaux sur l&apos;ensemble
+            des commandes, ou filtrés sur une commande traitée.
           </p>
         </div>
         <div className="g-tools">
@@ -97,18 +129,20 @@ export default function AdminDashboardPage() {
             </svg>
             {longDate}
           </span>
-          <select className="g-chip" aria-label="Mois" value={mois} onChange={(e) => setMois(e.target.value)}>
-            <option value="2026-09">Septembre 2026</option>
-            <option value="2026-10">Octobre 2026</option>
+          <select className="g-chip" aria-label="Commande" value={filtre} onChange={(e) => setFiltre(e.target.value)}>
+            <option value="toutes">Toutes les commandes ({snap.commandes.length})</option>
+            {snap.commandes.map((c) => (
+              <option key={c.id} value={c.id}>{c.nom}</option>
+            ))}
           </select>
         </div>
       </header>
 
       <section className="g-hero g-glass g-rise" style={{ ['--d' as string]: '.06s' }}>
         <div>
-          <div className="g-kicker"><i /> {mois === '2026-09' ? 'Facture validée' : 'Facture en cours'}</div>
+          <div className="g-kicker"><i /> {filtre === 'toutes' ? `Vue globale · ${snap.commandes.length} commandes` : commandeActive?.statut === 'validee' ? 'Facture validée' : 'Facture en cours'}</div>
           <h2>
-            {mois === '2026-09' ? 'Septembre' : 'Octobre'} · <em>{montant(totaux.TOTAL.m)}</em>
+            {filtre === 'toutes' ? 'Toutes les commandes' : commandeActive?.nom} · <em>{montant(totaux.TOTAL.m)}</em>
           </h2>
           <p>
             {totaux.TOTAL.n} lignes · AJOUT {totaux.AJOUT.n} · Renouvellement {totaux.RENOUVELLEMENT.n} ·
@@ -135,7 +169,7 @@ export default function AdminDashboardPage() {
         <div className="g-hero-side">
           <b className="g-num">{incoherences.length}</b>
           <span>incohérences</span>
-          <small>{mois}</small>
+          <small>{filtre === 'toutes' ? `${nbEnCours} en cours` : (commandeActive?.mois || '')}</small>
         </div>
       </section>
 
@@ -186,10 +220,10 @@ export default function AdminDashboardPage() {
                 <path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z" />
               </svg>
             </span>
-            <span className="g-delta">{totaux.SACA.n} SACA</span>
+            <span className="g-delta">{filtre === 'toutes' ? `${snap.commandes.length} commandes` : `${totaux.SACA.n} SACA`}</span>
           </div>
           <b className="g-value g-num">{montant(totaux.TOTAL.m)}</b>
-          <span className="g-label">Total du mois</span>
+          <span className="g-label">{filtre === 'toutes' ? 'Total global' : 'Total de la commande'}</span>
         </article>
       </section>
 
@@ -198,7 +232,7 @@ export default function AdminDashboardPage() {
           <div className="g-card-head">
             <div>
               <h3 className="g-card-title">Par catégorie</h3>
-              <p className="g-card-sub">AJOUT vs Renouvellement, montants du mois choisi.</p>
+              <p className="g-card-sub">AJOUT vs Renouvellement — {filtre === 'toutes' ? 'toutes commandes confondues' : 'commande affichée'}.</p>
             </div>
           </div>
           <div className="g-bars">
@@ -261,15 +295,76 @@ export default function AdminDashboardPage() {
         </article>
       </section>
 
-      <section className="g-card g-glass g-rise" style={{ ['--d' as string]: '.28s' }}>
+      {filtre === 'toutes' && (
+        <section className="g-card g-glass g-rise" style={{ ['--d' as string]: '.28s' }}>
+          <div className="g-card-head">
+            <div>
+              <h3 className="g-card-title">Commandes traitées · {snap.commandes.length}</h3>
+              <p className="g-card-sub">Montant et incohérences par commande. Cliquez sur une commande pour filtrer le tableau de bord.</p>
+            </div>
+          </div>
+          <div className="g-bars" style={{ marginBottom: 14 }}>
+            {parCommande.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="g-bar"
+                style={{ cursor: 'pointer', background: 'none', border: 'none', font: 'inherit', textAlign: 'left', padding: 0 }}
+                onClick={() => setFiltre(c.id)}
+                title={`Filtrer sur ${c.nom}`}
+              >
+                <span className="g-bar-label">
+                  <i style={{ background: c.statut === 'validee' ? '#22c55e' : '#3b82f6', color: c.statut === 'validee' ? '#22c55e' : '#3b82f6' }} />
+                  {c.nom}
+                </span>
+                <span className="g-track">
+                  <span className="g-fill" style={{ width: `${Math.round((c.montant / maxCmd) * 100)}%`, ['--g-bar-c' as string]: c.statut === 'validee' ? '#22c55e' : '#3b82f6' }} />
+                </span>
+                <span className="g-bar-val">
+                  <b className="g-num">{montant(c.montant)}</b>
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="g-table-wrap">
+            <table className="g-table">
+              <thead><tr><th>Commande</th><th>Statut</th><th style={{ textAlign: 'right' }}>Lignes</th><th style={{ textAlign: 'right' }}>Incohérences</th><th style={{ textAlign: 'right' }}>Montant</th><th></th></tr></thead>
+              <tbody>
+                {parCommande.map((c) => (
+                  <tr key={c.id}>
+                    <td><b>{c.nom}</b></td>
+                    <td>
+                      <span className={`g-badge ${c.statut === 'validee' ? 'is-ok' : c.statut === 'valide_admin' ? 'is-info' : 'is-warn'}`}>
+                        <i className="g-dot" />{c.statut === 'validee' ? 'Validée' : c.statut === 'valide_admin' ? 'Validée Admin' : 'En cours'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>{c.lignes}</td>
+                    <td style={{ textAlign: 'right' }}>{c.inco}</td>
+                    <td style={{ textAlign: 'right' }}>{montant(c.montant)}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => setFiltre(c.id)}>Afficher</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="g-card-foot">
+            <span>Calculs globaux recalculés à chaque modification</span>
+            <span>Le détail complet est sur la page Factures</span>
+          </div>
+        </section>
+      )}
+
+      <section className="g-card g-glass g-rise" style={{ ['--d' as string]: '.31s' }}>
         <div className="g-card-head">
           <div>
-            <h3 className="g-card-title">Lignes du mois · {lignes.length}</h3>
+            <h3 className="g-card-title">Lignes · {filtre === 'toutes' ? 'toutes commandes' : commandeActive?.nom} · {lignes.length}</h3>
             <p className="g-card-sub">Référence, compte, produit, catégorie et montant. Montants masqués pour l&apos;Analyste.</p>
           </div>
         </div>
         {lignes.length === 0 ? (
-          <p className="g-empty">Aucune ligne ce mois-ci.</p>
+          <p className="g-empty">Aucune ligne pour cette sélection.</p>
         ) : (
           <div className="g-table-wrap">
             <table className="g-table">

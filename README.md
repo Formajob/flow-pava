@@ -64,6 +64,57 @@ git push -u origin main
 
 > Ne pas déployer sans demande explicite.
 
+## Base de données Supabase (base partagée « flow »)
+
+La base **flow** contient aussi les tables des autres clients Flow — toutes les tables PAVA sont donc **préfixées `pava_`**.
+
+1. Ouvrir Supabase → projet de la base **flow** → **SQL Editor**.
+2. Coller le contenu de `supabase/migrations/001_pava_tables.sql` et **Run**. Le script est idempotent (relançable).
+3. Tables créées :
+   - `pava_commandes` — commandes de facture (nom obligatoire, mois, statut, étape)
+   - `pava_fichiers` — fichiers Excel/CSV importés par commande
+   - `pava_lignes` — data importés, ligne Excel d'origine conservée (`brut` JSONB), ligne de total exclue des calculs
+   - `pava_decisions` — décisions sur incohérences, uniques par (commande, réf) pour ne pas re-flagger
+   - `pava_historique` — historique de chaque modification sur la commande
+   - `pava_params` — Price Plan et paramètres de règles éditables (une ligne globale + une par commande)
+   - `pava_versions` — version du fichier Excel à chaque étape (bucket Storage `pava-exports`)
+4. RLS activé sur toutes les tables sans policy : seul le serveur (SERVICE_ROLE_KEY) y accède pour l'instant ; contrôle d'accès fin plus tard.
+5. Règle métier : une commande `validee` (Directeur) ne peut **pas** être supprimée (trigger SQL).
+6. Renseigner `.env.local` (voir `.env.example`) : `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+> Testé sur PostgreSQL 17 : création, idempotence, cascade, trigger de suppression interdite, unicité des décisions, RLS.
+
+## Brancher l'application sur Supabase
+
+L'application enregistre maintenant les données dans la base (et non plus en localStorage) dès que les variables Supabase sont définies. Sans variables, elle retombe automatiquement sur le mode démo.
+
+1. Supabase → projet de la base **flow** → **Project Settings → API** :
+   - `Project URL` → c'est `NEXT_PUBLIC_SUPABASE_URL`
+   - `service_role` (secret) → c'est `SUPABASE_SERVICE_ROLE_KEY`
+2. À la racine du projet, créer `.env.local` (jamais dans Git) :
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=eyJ...
+   ```
+3. Relancer le serveur : `npm run dev` (les variables sont lues au démarrage).
+4. Vérifier : `/admin/importation` doit afficher « Chargement des commandes depuis la base… » puis aucune commande — les données viennent de la base.
+
+Routes API créées (serveur uniquement, clé service_role jamais exposée au navigateur) :
+
+| Route | Rôle |
+|---|---|
+| `GET /api/pava/state` | état complet (commandes + paramètres) |
+| `POST /api/pava/commandes` | créer une commande (nom obligatoire) |
+| `GET/PATCH/DELETE /api/pava/commandes/[id]` | commande complète / statut+étape / suppression (bloquée si validée) |
+| `POST /api/pava/commandes/[id]/fichiers` | import : fichier + lignes par lots de 500 |
+| `PUT /api/pava/commandes/[id]/decisions` | décision sur incohérence (upsert, pas de re-flag) |
+| `POST /api/pava/commandes/[id]/historique` | tracer une action |
+| `POST /api/pava/commandes/[id]/versions` | tracer une version Excel par étape |
+| `PATCH/DELETE /api/pava/lignes/[id]` | corriger / supprimer une ligne |
+| `GET/PUT /api/pava/params` | Price Plan + règles |
+
+Sur Vercel : **Settings → Environment Variables** → ajouter les deux mêmes variables, puis **Redeploy**.
+
 ## Règles
 
 - Ordre des imports CSS : `globals.css` puis `glass.css`.

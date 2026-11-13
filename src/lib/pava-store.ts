@@ -1,9 +1,18 @@
 'use client';
 
 /**
- * Store PAVA — lignes sept./oct., fichiers importés, params éditables,
- * décisions sur incohérences, statut facture.
- * Clé localStorage : flow-pava-v1 (même que la démo).
+ * Store PAVA — deux modes :
+ *
+ * 1. MODE BASE DE DONNÉES (par défaut quand NEXT_PUBLIC_SUPABASE_URL est défini) :
+ *    toutes les données vivent dans Supabase (base « flow », tables pava_*).
+ *    Le store appelle les routes API /api/pava/* et garde un cache en mémoire
+ *    pour l'affichage. Les préférences (rôle, mois, commande active) restent
+ *    locales au navigateur.
+ *
+ * 2. MODE DÉMO (sans variable d'environnement) : localStorage, comme avant.
+ *
+ * L'API publique (fonctions exportées) est identique dans les deux modes :
+ * les pages n'ont pas à savoir lequel est actif.
  */
 
 import type { PavaParams } from './pava/types';
@@ -33,6 +42,8 @@ export interface PavaLigne {
   ref?: string;
   feuille?: string;
   ligneExcel?: number;
+  /** Ligne source brute du fichier Excel — conservée en DB pour traçabilité. */
+  brut?: Record<string, unknown>;
 }
 
 export interface ImportedFile {
@@ -57,7 +68,6 @@ export interface HistoriqueEntree {
 export interface Commande {
   id: string;
   nom: string;
-  type: 'facture_mois' | 'verification' | 'test' | 'suivi';
   mois?: string;
   dateCreation: string;
   statut: 'en_cours' | 'valide_admin' | 'validee';
@@ -80,9 +90,17 @@ export interface PavaState {
   commandes: Commande[];
   activeCommandeId: string;
   nomCommande: string;
+  /** Vrai pendant le premier chargement depuis la base. */
+  enChargement?: boolean;
+  /** Dernière erreur de synchronisation avec la base (mode DB). */
+  erreur?: string;
 }
 
 const KEY = 'flow-pava-v1';
+const PREFS_KEY = 'flow-pava-prefs-v1';
+
+/** Mode base de données actif dès que l'URL Supabase est fournie. */
+const DB_MODE = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
 
 export const DEFAULT_RULES = {
   internet: { '15': 150, '100': 200, '200': 250, '400': 300, '500': 300, 'Giga': 300 },
@@ -96,6 +114,25 @@ export const REF: Record<string, { ajout: { n: number; m: number }; renouvelleme
   '2026-09': { ajout: { n: 634, m: 64800 }, renouvellement: { n: 2947, m: 191555 }, saca: { n: 3, m: 400 }, nonFacturee: { n: 3, m: 650 }, total: { n: 3587, m: 257405 } },
   '2026-10': { ajout: { n: 442, m: 46420 }, renouvellement: { n: 2866, m: 185705 }, saca: { n: 3, m: 170 }, nonFacturee: { n: 3, m: 440 }, total: { n: 3314, m: 232735 } },
 };
+
+/* ================================================================
+ * ÉTAT PARTAGÉ + SOUSCRIPTION
+ * ================================================================ */
+
+const listeners = new Set<() => void>();
+
+function emit() {
+  listeners.forEach((fn) => fn());
+}
+
+export function subscribePava(fn: () => void) {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+/* ================================================================
+ * MODE DÉMO (localStorage) — inchangé par rapport à la version validée
+ * ================================================================ */
 
 function seedLines(): PavaLigne[] {
   const L: PavaLigne[] = [];
@@ -133,14 +170,14 @@ function defaultState(): PavaState {
   const oct = lignes.filter((l) => l.mois === '2026-10');
   const commandes: Commande[] = [
     {
-      id: 'cmd-sept-2026', nom: 'Facture Septembre 2026', type: 'facture_mois', mois: '2026-09',
+      id: 'cmd-sept-2026', nom: 'Facture Septembre 2026', mois: '2026-09',
       dateCreation: new Date().toISOString(), statut: 'validee',
       lignes: sept, fichiers: [], decisions: {},
       historique: [{ date: new Date().toISOString(), action: 'Commande créée (démo)' }],
       etape: 'factures',
     },
     {
-      id: 'cmd-oct-2026', nom: 'Facture Octobre 2026', type: 'facture_mois', mois: '2026-10',
+      id: 'cmd-oct-2026', nom: 'Facture Octobre 2026', mois: '2026-10',
       dateCreation: new Date().toISOString(), statut: 'en_cours',
       lignes: oct, fichiers: [], decisions: {},
       historique: [{ date: new Date().toISOString(), action: 'Commande créée (démo)' }],
@@ -156,7 +193,6 @@ function defaultState(): PavaState {
 }
 
 let memory: PavaState | null = null;
-const listeners = new Set<() => void>();
 
 function load(): PavaState {
   if (memory) return memory;
@@ -186,61 +222,7 @@ function load(): PavaState {
 function save(s: PavaState) {
   memory = s;
   try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* ignore */ }
-  listeners.forEach((fn) => fn());
-}
-
-export function getPavaState(): PavaState {
-  if (typeof window === 'undefined') return defaultState();
-  return load();
-}
-
-export function subscribePava(fn: () => void) {
-  listeners.add(fn);
-  return () => { listeners.delete(fn); };
-}
-
-export function setPavaRole(role: Role) {
-  save({ ...load(), role });
-}
-
-export function setPavaMois(mois: string) {
-  save({ ...load(), mois });
-}
-
-export function addImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[]) {
-  const s = load();
-  save({
-    ...s,
-    fichiers: [fichier, ...s.fichiers],
-    lignes: [...s.lignes, ...nouvelles],
-  });
-}
-
-export function updateLigne(id: string, patch: Partial<PavaLigne>) {
-  const s = load();
-  save({ ...s, lignes: s.lignes.map((l) => (l.id === id ? { ...l, ...patch } : l)) });
-}
-
-export function deleteLigne(id: string) {
-  const s = load();
-  save({ ...s, lignes: s.lignes.filter((l) => l.id !== id) });
-}
-
-export function setParams(params: PavaParams) {
-  save({ ...load(), params });
-}
-
-export function setDecision(anomalyId: string, decision: Decision) {
-  const s = load();
-  save({ ...s, decisions: { ...s.decisions, [anomalyId]: decision } });
-}
-
-export function setStatutFacture(mois: string, statut: string) {
-  const s = load();
-  const commandes = s.commandes.map((c) =>
-    c.id === s.activeCommandeId ? { ...c, statut: statut as Commande['statut'], historique: [...c.historique, { date: new Date().toISOString(), action: `Statut → ${statut}` }] } : c
-  );
-  save({ ...s, statutFacture: { ...s.statutFacture, [mois]: statut }, commandes });
+  emit();
 }
 
 function syncActive(s: PavaState): PavaState {
@@ -252,12 +234,411 @@ function syncActive(s: PavaState): PavaState {
   return { ...s, commandes };
 }
 
-export function createCommande(nom: string, type: Commande['type'], mois?: string) {
-  if (!nom.trim()) return;
+/* ================================================================
+ * MODE BASE DE DONNÉES (Supabase via routes API)
+ * ================================================================ */
+
+interface Prefs { role: Role; mois: string; activeCommandeId?: string }
+
+function lirePrefs(): Prefs {
+  if (typeof window === 'undefined') return { role: 'admin', mois: '' };
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null') as Prefs | null;
+    return { role: p?.role || 'admin', mois: p?.mois || '', activeCommandeId: p?.activeCommandeId };
+  } catch {
+    return { role: 'admin', mois: '' };
+  }
+}
+
+function ecrirePrefs(p: Prefs) {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+}
+
+let dbState: PavaState | null = null;
+let dbErreur = '';
+
+function etatVide(enChargement = false): PavaState {
+  return {
+    role: 'admin', mois: '', lignes: [], rules: DEFAULT_RULES,
+    fichiers: [], params: DEFAULT_PARAMS, decisions: {}, statutFacture: {},
+    commandes: [], activeCommandeId: '', nomCommande: '',
+    enChargement, erreur: dbErreur || undefined,
+  };
+}
+
+function etatDb(): PavaState {
+  return dbState || etatVide(true);
+}
+
+function assembler(commandes: Commande[], params: PavaParams): PavaState {
+  const p = lirePrefs();
+  const active = commandes.find((c) => c.id === p.activeCommandeId) || commandes[commandes.length - 1] || null;
+  const statutFacture: Record<string, string> = {};
+  for (const c of commandes) if (c.mois) statutFacture[c.mois] = c.statut;
+  return {
+    role: p.role,
+    mois: active?.mois || p.mois || '',
+    lignes: active?.lignes || [],
+    rules: DEFAULT_RULES,
+    fichiers: active?.fichiers || [],
+    params,
+    decisions: active?.decisions || {},
+    statutFacture,
+    commandes,
+    activeCommandeId: active?.id || '',
+    nomCommande: active?.nom || '',
+    erreur: dbErreur || undefined,
+  };
+}
+
+async function api<T>(chemin: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`/api/pava${chemin}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+  });
+  const texte = await res.text();
+  const data = texte ? (JSON.parse(texte) as Record<string, unknown>) : {};
+  if (!res.ok) throw new Error((data.error as string) || `Erreur ${res.status}`);
+  return data as T;
+}
+
+function noterErreur(e: unknown) {
+  dbErreur = e instanceof Error ? e.message : String(e);
+  if (dbState) dbState = { ...dbState, erreur: dbErreur };
+  emit();
+}
+
+function effacerErreur() {
+  if (dbErreur) {
+    dbErreur = '';
+    if (dbState) dbState = { ...dbState, erreur: undefined };
+  }
+}
+
+async function chargerEtat(): Promise<void> {
+  try {
+    const r = await api<{ commandes: Commande[]; params: PavaParams }>('/state');
+    effacerErreur();
+    dbState = assembler(r.commandes, r.params);
+  } catch (e) {
+    dbState = etatVide();
+    noterErreur(e);
+    return;
+  }
+  emit();
+}
+
+/** Activer le chargement initial dès l'import du module (navigateur uniquement). */
+if (DB_MODE && typeof window !== 'undefined') {
+  void chargerEtat();
+}
+
+async function dbCreateCommande(nom: string, mois?: string): Promise<boolean> {
+  const p = lirePrefs();
+  const m = mois || p.mois || new Date().toISOString().slice(0, 7);
+  try {
+    const c = await api<Commande>('/commandes', { method: 'POST', body: JSON.stringify({ nom, mois: m }) });
+    ecrirePrefs({ ...p, mois: m, activeCommandeId: c.id });
+    effacerErreur();
+    dbState = assembler([...etatDb().commandes, c], etatDb().params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+function dbSetActiveCommande(id: string) {
+  const s = etatDb();
+  const cible = s.commandes.find((c) => c.id === id);
+  if (!cible) return;
+  ecrirePrefs({ ...lirePrefs(), activeCommandeId: id, mois: cible.mois || lirePrefs().mois });
+  dbState = assembler(s.commandes, s.params);
+  emit();
+}
+
+async function dbDeleteCommande(id: string): Promise<boolean> {
+  const s = etatDb();
+  const cible = s.commandes.find((c) => c.id === id);
+  if (!cible) return false;
+  if (cible.statut === 'validee') return false; // validée par directeur : interdit
+  if (s.commandes.length <= 1) return false;
+  try {
+    await api(`/commandes/${id}`, { method: 'DELETE' });
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+  const restantes = s.commandes.filter((c) => c.id !== id);
+  const nextActive = s.activeCommandeId === id ? restantes[restantes.length - 1] : restantes.find((c) => c.id === s.activeCommandeId)!;
+  ecrirePrefs({ ...lirePrefs(), activeCommandeId: nextActive.id });
+  effacerErreur();
+  dbState = assembler(restantes, s.params);
+  emit();
+  return true;
+}
+
+async function dbAddImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[]): Promise<boolean> {
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) {
+    noterErreur(new Error('Aucune commande active — créez une commande avant d’importer.'));
+    return false;
+  }
+  try {
+    const r = await api<{ fichier: ImportedFile; lignes: PavaLigne[] }>(`/commandes/${idCmd}/fichiers`, {
+      method: 'POST',
+      body: JSON.stringify({ fichier, lignes: nouvelles }),
+    });
+    const commandes = s.commandes.map((c) =>
+      c.id === idCmd
+        ? { ...c, fichiers: [r.fichier, ...c.fichiers], lignes: [...c.lignes, ...r.lignes] }
+        : c
+    );
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+async function dbUpdateLigne(id: string, patch: Partial<PavaLigne>): Promise<boolean> {
+  const s = etatDb();
+  try {
+    const maj = await api<PavaLigne>(`/lignes/${id}`, { method: 'PATCH', body: JSON.stringify({ patch }) });
+    const commandes = s.commandes.map((c) => ({
+      ...c,
+      lignes: c.lignes.map((l) => (l.id === id ? { ...l, ...maj } : l)),
+    }));
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+async function dbDeleteLigne(id: string): Promise<boolean> {
+  const s = etatDb();
+  try {
+    await api(`/lignes/${id}`, { method: 'DELETE' });
+    const commandes = s.commandes.map((c) => ({ ...c, lignes: c.lignes.filter((l) => l.id !== id) }));
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+async function dbSetParams(params: PavaParams): Promise<boolean> {
+  const s = etatDb();
+  try {
+    await api('/params', { method: 'PUT', body: JSON.stringify({ params }) });
+    effacerErreur();
+    dbState = assembler(s.commandes, params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+async function dbSetDecision(anomalyId: string, decision: Decision): Promise<boolean> {
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) return false;
+  try {
+    await api(`/commandes/${idCmd}/decisions`, {
+      method: 'PUT',
+      body: JSON.stringify({ ref: anomalyId, statut: decision.statut, commentaire: decision.commentaire }),
+    });
+    const commandes = s.commandes.map((c) =>
+      c.id === idCmd ? { ...c, decisions: { ...c.decisions, [anomalyId]: decision } } : c
+    );
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+async function dbSetStatutFacture(mois: string, statut: string): Promise<boolean> {
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) return false;
+  try {
+    const c = await api<Commande>(`/commandes/${idCmd}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ statut, mois }),
+    });
+    const commandes = s.commandes.map((x) => (x.id === idCmd ? c : x));
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+async function dbAddHistorique(action: string): Promise<boolean> {
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) return false;
+  try {
+    const h = await api<HistoriqueEntree>(`/commandes/${idCmd}/historique`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    });
+    const commandes = s.commandes.map((c) => (c.id === idCmd ? { ...c, historique: [...c.historique, h] } : c));
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+async function dbSetEtape(etape: string): Promise<boolean> {
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) return false;
+  try {
+    await api(`/commandes/${idCmd}`, { method: 'PATCH', body: JSON.stringify({ etape }) });
+    const commandes = s.commandes.map((c) => (c.id === idCmd ? { ...c, etape } : c));
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
+async function dbAddVersion(etape: string, nomFichier: string, nbLignes?: number, totalCalcule?: number): Promise<void> {
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) return;
+  try {
+    const v = await api<{ numero: number }>(`/commandes/${idCmd}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ etape, nomFichier, nbLignes, totalCalcule }),
+    });
+    const commandes = s.commandes.map((c) =>
+      c.id === idCmd
+        ? { ...c, historique: [...c.historique, { date: new Date().toISOString(), action: `Version ${v.numero} générée (${etape}) : ${nomFichier}` }] }
+        : c
+    );
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+  } catch (e) {
+    noterErreur(e);
+  }
+}
+
+/* ================================================================
+ * API PUBLIQUE — identique dans les deux modes
+ * ================================================================ */
+
+export function getPavaState(): PavaState {
+  if (DB_MODE) return etatDb();
+  if (typeof window === 'undefined') return defaultState();
+  return load();
+}
+
+export function setPavaRole(role: Role) {
+  if (DB_MODE) {
+    ecrirePrefs({ ...lirePrefs(), role });
+    dbState = assembler(etatDb().commandes, etatDb().params);
+    emit();
+    return;
+  }
+  save({ ...load(), role });
+}
+
+export function setPavaMois(mois: string) {
+  if (DB_MODE) {
+    ecrirePrefs({ ...lirePrefs(), mois });
+    dbState = assembler(etatDb().commandes, etatDb().params);
+    emit();
+    return;
+  }
+  save({ ...load(), mois });
+}
+
+export function addImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[]): Promise<boolean> | boolean {
+  if (DB_MODE) return dbAddImportedFile(fichier, nouvelles);
+  const s = load();
+  save({
+    ...s,
+    fichiers: [fichier, ...s.fichiers],
+    lignes: [...s.lignes, ...nouvelles],
+  });
+  return true;
+}
+
+export function updateLigne(id: string, patch: Partial<PavaLigne>): Promise<boolean> | boolean {
+  if (DB_MODE) return dbUpdateLigne(id, patch);
+  const s = load();
+  save({ ...s, lignes: s.lignes.map((l) => (l.id === id ? { ...l, ...patch } : l)) });
+  return true;
+}
+
+export function deleteLigne(id: string): Promise<boolean> | boolean {
+  if (DB_MODE) return dbDeleteLigne(id);
+  const s = load();
+  save({ ...s, lignes: s.lignes.filter((l) => l.id !== id) });
+  return true;
+}
+
+export function setParams(params: PavaParams): Promise<boolean> | boolean {
+  if (DB_MODE) return dbSetParams(params);
+  save({ ...load(), params });
+  return true;
+}
+
+export function setDecision(anomalyId: string, decision: Decision): Promise<boolean> | boolean {
+  if (DB_MODE) return dbSetDecision(anomalyId, decision);
+  const s = load();
+  save({ ...s, decisions: { ...s.decisions, [anomalyId]: decision } });
+  return true;
+}
+
+export function setStatutFacture(mois: string, statut: string): Promise<boolean> | boolean {
+  if (DB_MODE) return dbSetStatutFacture(mois, statut);
+  const s = load();
+  const commandes = s.commandes.map((c) =>
+    c.id === s.activeCommandeId ? { ...c, statut: statut as Commande['statut'], historique: [...c.historique, { date: new Date().toISOString(), action: `Statut → ${statut}` }] } : c
+  );
+  save({ ...s, statutFacture: { ...s.statutFacture, [mois]: statut }, commandes });
+  return true;
+}
+
+export function createCommande(nom: string, mois?: string): Promise<boolean> | boolean {
+  if (!nom.trim()) return false;
+  if (DB_MODE) return dbCreateCommande(nom, mois);
   const s = syncActive(load());
   const id = `cmd-${Date.now()}`;
   const nouvelle: Commande = {
-    id, nom: nom.trim(), type, mois: mois || s.mois,
+    id, nom: nom.trim(), mois: mois || s.mois,
     dateCreation: new Date().toISOString(), statut: 'en_cours',
     lignes: [], fichiers: [], decisions: {},
     historique: [{ date: new Date().toISOString(), action: `Commande créée : ${nom.trim()}` }],
@@ -271,9 +652,14 @@ export function createCommande(nom: string, type: Commande['type'], mois?: strin
     lignes: [], fichiers: [], decisions: {},
     mois: mois || s.mois,
   });
+  return true;
 }
 
 export function setActiveCommande(id: string) {
+  if (DB_MODE) {
+    dbSetActiveCommande(id);
+    return;
+  }
   const s = syncActive(load());
   const cible = s.commandes.find((c) => c.id === id);
   if (!cible) return;
@@ -288,7 +674,8 @@ export function setActiveCommande(id: string) {
   });
 }
 
-export function deleteCommande(id: string) {
+export function deleteCommande(id: string): Promise<boolean> | boolean {
+  if (DB_MODE) return dbDeleteCommande(id);
   const s = load();
   const cible = s.commandes.find((c) => c.id === id);
   if (!cible) return false;
@@ -308,12 +695,40 @@ export function deleteCommande(id: string) {
   return true;
 }
 
-export function addHistorique(action: string) {
+export function addHistorique(action: string): Promise<boolean> | boolean {
+  if (DB_MODE) return dbAddHistorique(action);
   const s = load();
   const commandes = s.commandes.map((c) =>
     c.id === s.activeCommandeId ? { ...c, historique: [...c.historique, { date: new Date().toISOString(), action }] } : c
   );
   save({ ...s, commandes });
+  return true;
+}
+
+/** Faire avancer l'étape de la commande active (importation → analyse → …). */
+export function setEtapeCommande(etape: string): Promise<boolean> | boolean {
+  if (DB_MODE) return dbSetEtape(etape);
+  const s = load();
+  const commandes = s.commandes.map((c) => (c.id === s.activeCommandeId ? { ...c, etape } : c));
+  save({ ...s, commandes });
+  return true;
+}
+
+/** Tracer une version du fichier Excel générée (une par étape). */
+export function addVersion(etape: string, nomFichier: string, nbLignes?: number, totalCalcule?: number): Promise<void> | void {
+  if (DB_MODE) return dbAddVersion(etape, nomFichier, nbLignes, totalCalcule);
+  const s = load();
+  const commandes = s.commandes.map((c) =>
+    c.id === s.activeCommandeId
+      ? { ...c, historique: [...c.historique, { date: new Date().toISOString(), action: `Version générée (${etape}) : ${nomFichier}` }] }
+      : c
+  );
+  save({ ...s, commandes });
+}
+
+/** Recharger l'état depuis la base (bouton « Rafraîchir »). */
+export function refreshPava(): Promise<void> | void {
+  if (DB_MODE) return chargerEtat();
 }
 
 /** Détection automatique des incohérences (même logique que la démo). */

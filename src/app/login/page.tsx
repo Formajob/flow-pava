@@ -54,6 +54,7 @@ function LoginForm() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [legalOpen, setLegalOpen] = useState(false)
   const fromFlow = searchParams.get('from') === 'flow'
 
   useEffect(() => {
@@ -61,6 +62,20 @@ function LoginForm() {
     if (prefilled && prefilled.includes('@')) setEmail(prefilled.trim().toLowerCase())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Mentions légales / confidentiel — affichées une fois par session (comme VDM)
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('flow-pava:legal-notice-accepted') !== '1') setLegalOpen(true)
+    } catch {
+      setLegalOpen(true)
+    }
+  }, [])
+
+  const acceptLegal = () => {
+    try { sessionStorage.setItem('flow-pava:legal-notice-accepted', '1') } catch {}
+    setLegalOpen(false)
+  }
 
   useEffect(() => {
     if (status === 'authenticated') router.replace('/admin')
@@ -190,6 +205,39 @@ function LoginForm() {
           </div>
         </div>
       </section>
+
+      {/* ── pop-up mentions légales / confidentiel (à la connexion) ── */}
+      {legalOpen && (
+        <div className="lg-legal" role="dialog" aria-modal="true" aria-labelledby="lg-legal-title">
+          <div className="lg-legal-card">
+            <div className="lg-legal-head">
+              <span className="lg-word lg-word-dark" style={{ fontSize: 15 }}>ACX<em>Flow</em></span>
+              <h2 id="lg-legal-title">Mentions légales</h2>
+            </div>
+            <div className="lg-legal-body">
+              <p>Plateforme interne, développée exclusivement pour <b>Xceed Maroc</b>.</p>
+              <p>
+                <b>Entreprise cliente :</b> Videotron — activité PAV Affaire (Vidéotron Affaire).
+                Plateforme créée pour les besoins internes de l&apos;équipe FLOW VL.
+              </p>
+              <p>
+                <b>Développée par ACX Maroc.</b>{' '}
+                <a href="https://acx.ma/" target="_blank" rel="noreferrer">https://acx.ma/</a>
+                <br />
+                Contact : <a href="mailto:flow@acx.ma">flow@acx.ma</a>
+              </p>
+              <p className="lg-legal-conf">
+                Utilisation interne uniquement. Toutes les informations diffusées sur cette
+                plateforme sont strictement confidentielles. Toute divulgation, reproduction ou
+                partage non autorisé est interdit.
+              </p>
+            </div>
+            <div className="lg-legal-foot">
+              <button type="button" onClick={acceptLegal}>J&apos;ai compris</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -307,4 +355,22 @@ body:has(.lg) .g-aurora{display:none!important}
   .lg-card{padding:22px 18px 20px;border-radius:20px}
   .lg-card header h2{font-size:22px}
 }
+
+/* ── Mentions légales / confidentiel — pop-up à la connexion ── */
+.lg-legal{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;
+  background:rgba(11,23,48,.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);padding:18px}
+.lg-legal-card{width:100%;max-width:560px;max-height:90vh;overflow:auto;background:#fff;border-radius:24px;
+  border:1px solid #e4e8f1;box-shadow:0 30px 80px rgba(11,23,48,.35);animation:lg-legal-in .25s ease}
+@keyframes lg-legal-in{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+.lg-legal-head{display:flex;align-items:center;gap:12px;padding:18px 24px;border-bottom:1px solid #e4e8f1}
+.lg-legal-head h2{margin-left:auto;font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#62708a}
+.lg-legal-body{padding:22px 24px;display:flex;flex-direction:column;gap:14px;font-size:14px;line-height:1.65;color:#0b1730}
+.lg-legal-body p{margin:0}
+.lg-legal-body a{color:#7c3aed;font-weight:650}
+.lg-legal-body a:hover{text-decoration:underline;text-underline-offset:3px}
+.lg-legal-conf{padding:12px 14px;border-radius:12px;background:#f4f0ff;border:1px solid #e6dcff;font-weight:600;color:#4c1d95}
+.lg-legal-foot{padding:18px 24px;border-top:1px solid #e4e8f1}
+.lg-legal-foot button{width:100%;height:46px;border:none;border-radius:999px;background:#0b1730;color:#fff;
+  font-size:14px;font-weight:750;cursor:pointer;transition:.2s}
+.lg-legal-foot button:hover{background:#16245a;transform:translateY(-1px)}
 `

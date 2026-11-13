@@ -3,30 +3,37 @@
 /**
  * Importation PAVA (ex-Réception) — création de commande + import Excel/CSV.
  * Chaque commande = une entrée/projet avec historique.
- * La commande génère un fichier Excel au nom saisi + page Data importés.
+ * « Data importés » affiche un sommaire des lignes importées (pas toutes les lignes).
  */
 
 import { useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { getPavaState, subscribePava, addImportedFile, createCommande, setActiveCommande, addHistorique, type PavaLigne } from '@/lib/pava-store';
+import { getPavaState, subscribePava, addImportedFile, createCommande, setActiveCommande, addHistorique, addVersion, type PavaLigne } from '@/lib/pava-store';
 import { detecterFeuille, normaliserLigne } from '@/lib/pava/normalize';
+
+function fmt(n: number) {
+  return Number(n || 0).toLocaleString('fr-FR');
+}
 
 export default function ImportationPage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
   const [nom, setNom] = useState('');
-  const [type, setType] = useState<'facture_mois' | 'verification' | 'test' | 'suivi'>('facture_mois');
   const [message, setMessage] = useState('');
   const [chargement, setChargement] = useState(false);
-  const [apercu, setApercu] = useState<PavaLigne[]>([]);
 
-  const creer = () => {
+  const creer = async () => {
     if (!nom.trim()) {
       setMessage('Le nom de la commande est obligatoire.');
       return;
     }
-    createCommande(nom, type, snap.mois);
-    setMessage(`Commande « ${nom.trim()} » créée. Importez maintenant les fichiers.`);
-    setNom('');
+    setMessage('Création de la commande…');
+    const ok = await createCommande(nom, snap.mois);
+    if (ok) {
+      setMessage(`Commande « ${nom.trim()} » créée. Importez maintenant les fichiers.`);
+      setNom('');
+    } else {
+      setMessage(snap.erreur || 'Création impossible.');
+    }
   };
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,6 +74,7 @@ export default function ImportationPage() {
             montantOrigine: norm.paiement_pav,
             feuille: norm.feuille,
             ligneExcel: norm.ligne_excel,
+            brut: rows[i], // ligne source conservée en base pour traçabilité
           });
         }
       }
@@ -74,13 +82,16 @@ export default function ImportationPage() {
       if (nouvelles.length === 0) {
         setMessage('Aucune ligne exploitable trouvée. Vérifiez les feuilles et les colonnes.');
       } else {
-        addImportedFile(
+        setMessage(`Enregistrement de ${nouvelles.length} lignes dans la base…`);
+        const ok = await addImportedFile(
           { id: `f-${Date.now()}`, nom: f.name, date: new Date().toLocaleString('fr-FR'), feuilles, nbLignes: nouvelles.length, mois: snap.mois },
           nouvelles
         );
-        addHistorique(`Import ${f.name} : ${nouvelles.length} lignes`);
-        setApercu(nouvelles.slice(0, 20));
-        setMessage(`${nouvelles.length} lignes importées. La commande se génère comme fichier Excel au nom saisi.`);
+        if (ok) {
+          setMessage(`${nouvelles.length} lignes importées et enregistrées. La commande se génère comme fichier Excel au nom saisi.`);
+        } else {
+          setMessage(snap.erreur || 'Enregistrement impossible — réessayez.');
+        }
       }
     } catch {
       setMessage('Impossible de lire ce fichier. Vérifiez le format (.xlsx, .xls, .csv).');
@@ -101,7 +112,26 @@ export default function ImportationPage() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Data importés');
     const nomFichier = (snap.nomCommande || 'commande').replace(/[\\/:*?"<>|]/g, '_');
     XLSX.writeFile(wb, `${nomFichier}.xlsx`);
+    // Version tracée dans la base (une version par étape, nommée d'après la commande)
+    void addVersion('importation', `${nomFichier}.xlsx`, snap.lignes.length);
   };
+
+  // Sommaire des lignes importées : par type de produit + total général
+  const sommaire = (() => {
+    const parProduit = new Map<string, { lignes: number; qte: number; montant: number }>();
+    for (const l of snap.lignes) {
+      const cle = l.produit || l.famille || '—';
+      const e = parProduit.get(cle) || { lignes: 0, qte: 0, montant: 0 };
+      e.lignes += 1;
+      e.qte += l.quantite || 0;
+      e.montant += l.montantOrigine ?? 0;
+      parProduit.set(cle, e);
+    }
+    return [...parProduit.entries()].sort((a, b) => b[1].lignes - a[1].lignes);
+  })();
+  const totalLignes = snap.lignes.length;
+  const totalQte = snap.lignes.reduce((s, l) => s + (l.quantite || 0), 0);
+  const totalMontant = snap.lignes.reduce((s, l) => s + (l.montantOrigine ?? 0), 0);
 
   return (
     <>
@@ -116,6 +146,15 @@ export default function ImportationPage() {
         </div>
       </header>
 
+      {snap.enChargement && (
+        <p className="g-lead" style={{ marginTop: -6 }}>Chargement des commandes depuis la base…</p>
+      )}
+      {snap.erreur && (
+        <div className="g-card g-glass" style={{ borderColor: 'var(--g-bad, #dc2626)' }}>
+          <p style={{ fontSize: 13 }}><b>Erreur base de données :</b> {snap.erreur}</p>
+        </div>
+      )}
+
       <section className="g-card g-glass g-rise">
         <div className="g-card-head">
           <div>
@@ -124,23 +163,19 @@ export default function ImportationPage() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
-          <label style={{ flex: '1 1 260px', fontSize: 12, fontWeight: 700 }}>
+          <label style={{ flex: '1 1 320px', fontSize: 12, fontWeight: 700 }}>
             Nom de la commande *
-            <input className="g-input" placeholder="Ex : Facture Novembre, Facture_test, Vérification Août 2026" value={nom} onChange={(e) => setNom(e.target.value)} style={{ marginTop: 6 }} />
-          </label>
-          <label style={{ fontSize: 12, fontWeight: 700 }}>
-            Type
-            <select className="g-input" value={type} onChange={(e) => setType(e.target.value as never)} style={{ marginTop: 6 }}>
-              <option value="facture_mois">Facture du mois à préparer</option>
-              <option value="verification">Ancienne facture à valider</option>
-              <option value="test">Test de facture</option>
-              <option value="suivi">Suivi de production PAVA</option>
-            </select>
+            <input className="g-input" placeholder="Ex : Facture Novembre, facture_test, Vérification Août 2026" value={nom} onChange={(e) => setNom(e.target.value)} style={{ marginTop: 6 }} />
           </label>
           <button type="button" className="g-btn" onClick={creer}>Créer la commande</button>
         </div>
         <div style={{ marginTop: 12, fontSize: 13 }}>
-          Commande active : <b>{snap.nomCommande}</b> · {snap.lignes.length} lignes · {snap.fichiers.length} fichiers
+          Commande active :{' '}
+          {snap.activeCommandeId ? (
+            <><b>{snap.nomCommande}</b> · {snap.lignes.length} lignes · {snap.fichiers.length} fichiers</>
+          ) : (
+            <b>aucune — créez la première commande de facturation ci-dessus</b>
+          )}
         </div>
         <div style={{ marginTop: 10 }}>
           <label style={{ fontSize: 12, fontWeight: 700 }}>
@@ -176,24 +211,49 @@ export default function ImportationPage() {
       <section className="g-card g-glass g-rise">
         <div className="g-card-head">
           <div>
-            <h3 className="g-card-title">Data importés · {snap.lignes.length} lignes</h3>
-            <p className="g-card-sub">Lignes de tous les fichiers importés pour cette commande.</p>
+            <h3 className="g-card-title">Data importés · sommaire</h3>
+            <p className="g-card-sub">Sommaire des lignes importées pour cette commande — le détail complet reste dans le fichier téléchargeable.</p>
           </div>
+          <span className="g-badge is-info"><i className="g-dot" />{totalLignes} lignes</span>
         </div>
-        {snap.lignes.length === 0 ? (
+        {snap.fichiers.length > 0 && (
+          <div className="g-table-wrap" style={{ marginBottom: 16 }}>
+            <table className="g-table">
+              <thead><tr><th>Fichier</th><th>Date</th><th>Feuilles</th><th style={{ textAlign: 'right' }}>Lignes</th></tr></thead>
+              <tbody>
+                {snap.fichiers.map((f) => (
+                  <tr key={f.id}>
+                    <td><b>{f.nom}</b></td>
+                    <td>{f.date}</td>
+                    <td style={{ maxWidth: 320 }}>{f.feuilles.join(' · ')}</td>
+                    <td style={{ textAlign: 'right' }}>{f.nbLignes}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {totalLignes === 0 ? (
           <p className="g-empty">Aucune ligne pour cette commande. Importez un fichier pour commencer.</p>
         ) : (
           <div className="g-table-wrap">
             <table className="g-table">
-              <thead><tr><th>Feuille</th><th>Ligne Excel</th><th>Compte</th><th>Produit</th><th>Catégorie</th><th style={{ textAlign: 'right' }}>Montant</th></tr></thead>
+              <thead><tr><th>Type de produit</th><th style={{ textAlign: 'right' }}>Lignes</th><th style={{ textAlign: 'right' }}>Quantité</th><th style={{ textAlign: 'right' }}>Montant importé</th></tr></thead>
               <tbody>
-                {(apercu.length ? apercu : snap.lignes.slice(0, 20)).map((l) => (
-                  <tr key={l.id}>
-                    <td>{l.feuille}</td><td>{l.ligneExcel}</td><td>{l.compte || '—'}</td>
-                    <td><b>{l.produit}</b> · {l.desc}</td><td>{l.categorie}</td>
-                    <td style={{ textAlign: 'right' }}>{l.montantOrigine ?? '—'}</td>
+                {sommaire.map(([p, v]) => (
+                  <tr key={p}>
+                    <td><b>{p}</b></td>
+                    <td style={{ textAlign: 'right' }}>{v.lignes}</td>
+                    <td style={{ textAlign: 'right' }}>{v.qte}</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(v.montant)} $</td>
                   </tr>
                 ))}
+                <tr>
+                  <td><b>Total</b></td>
+                  <td style={{ textAlign: 'right' }}><b>{totalLignes}</b></td>
+                  <td style={{ textAlign: 'right' }}><b>{totalQte}</b></td>
+                  <td style={{ textAlign: 'right' }}><b>{fmt(totalMontant)} $</b></td>
+                </tr>
               </tbody>
             </table>
           </div>
