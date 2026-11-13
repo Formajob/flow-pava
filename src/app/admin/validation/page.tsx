@@ -52,10 +52,22 @@ export default function ValidationPage() {
             {restantes.length > 0 ? ' Traitez les restantes en Contrôle avant de valider.' : ' Toutes les incohérences sont traitées.'}
           </p>
           <div className="g-hero-actions">
-            <button type="button" className="g-btn" onClick={validerAdmin} disabled={statut !== 'en_cours' || restantes.length > 0}>
+            <button
+              type="button"
+              className="g-btn"
+              onClick={validerAdmin}
+              disabled={statut !== 'en_cours' || restantes.length > 0 || snap.role === 'analyste'}
+              title={snap.role === 'analyste' ? 'Réservé à l’Admin et au Directeur' : undefined}
+            >
               Valider (Admin)
             </button>
-            <button type="button" className="g-btn g-btn--ghost" onClick={validerDirecteur} disabled={statut !== 'valide_admin'}>
+            <button
+              type="button"
+              className="g-btn g-btn--ghost"
+              onClick={validerDirecteur}
+              disabled={statut !== 'valide_admin' || snap.role !== 'directeur'}
+              title={snap.role !== 'directeur' ? 'Réservé au Directeur' : undefined}
+            >
               Valider (Directeur)
             </button>
             <Link className="g-btn g-btn--ghost" href="/admin/controle">Aller en Contrôle</Link>

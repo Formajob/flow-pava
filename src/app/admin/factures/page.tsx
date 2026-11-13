@@ -8,6 +8,7 @@
  */
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
+import Link from 'next/link';
 import { getPavaState, subscribePava, REF, setActiveCommande, deleteCommande, addVersion } from '@/lib/pava-store';
 import { runEngine, depuisDemo } from '@/lib/pava/engine';
 
@@ -260,6 +261,29 @@ export default function FacturesPage() {
     const nomPdf = (snap.nomCommande || `facture-pava-${mois}`).replace(/[\\/:*?"<>|]/g, '_');
     doc.save(`${nomPdf}.pdf`);
   };
+
+  if (snap.commandes.length === 0) {
+    return (
+      <>
+        <header className="g-top g-rise">
+          <div>
+            <div className="g-kicker"><i /> VL · PAVA Affaire</div>
+            <h1>Factures</h1>
+            <p className="g-lead">Toutes les commandes de facturation : facture du mois, ancienne facture à valider, test, suivi de production.</p>
+          </div>
+        </header>
+        <section className="g-card g-glass g-rise">
+          <div className="g-card-head">
+            <div>
+              <h3 className="g-card-title">Aucune commande</h3>
+              <p className="g-card-sub">Créez une première commande de facturation en Importation pour la voir apparaître ici.</p>
+            </div>
+          </div>
+          <Link className="g-btn" href="/admin/importation">Créer une commande</Link>
+        </section>
+      </>
+    );
+  }
 
   return (
     <>

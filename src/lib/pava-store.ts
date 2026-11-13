@@ -101,6 +101,8 @@ const PREFS_KEY = 'flow-pava-prefs-v1';
 
 /** Mode base de données actif dès que l'URL Supabase est fournie. */
 const DB_MODE = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
+/** Vrai = données enregistrées dans Supabase ; faux = mode démo localStorage. */
+export const EST_MODE_DB = DB_MODE;
 
 export const DEFAULT_RULES = {
   internet: { '15': 150, '100': 200, '200': 250, '400': 300, '500': 300, 'Giga': 300 },
@@ -363,7 +365,6 @@ async function dbDeleteCommande(id: string): Promise<boolean> {
   const cible = s.commandes.find((c) => c.id === id);
   if (!cible) return false;
   if (cible.statut === 'validee') return false; // validée par directeur : interdit
-  if (s.commandes.length <= 1) return false;
   try {
     await api(`/commandes/${id}`, { method: 'DELETE' });
   } catch (e) {
@@ -371,8 +372,8 @@ async function dbDeleteCommande(id: string): Promise<boolean> {
     return false;
   }
   const restantes = s.commandes.filter((c) => c.id !== id);
-  const nextActive = s.activeCommandeId === id ? restantes[restantes.length - 1] : restantes.find((c) => c.id === s.activeCommandeId)!;
-  ecrirePrefs({ ...lirePrefs(), activeCommandeId: nextActive.id });
+  const nextActive = s.activeCommandeId === id ? restantes[restantes.length - 1] : restantes.find((c) => c.id === s.activeCommandeId);
+  ecrirePrefs({ ...lirePrefs(), activeCommandeId: nextActive?.id });
   effacerErreur();
   dbState = assembler(restantes, s.params);
   emit();
@@ -681,16 +682,15 @@ export function deleteCommande(id: string): Promise<boolean> | boolean {
   if (!cible) return false;
   if (cible.statut === 'validee') return false; // validée par directeur : suppression interdite sans accès
   const restantes = s.commandes.filter((c) => c.id !== id);
-  if (restantes.length === 0) return false;
-  const nextActive = s.activeCommandeId === id ? restantes[0] : s.commandes.find((c) => c.id === s.activeCommandeId)!;
+  const nextActive = s.activeCommandeId === id ? restantes[restantes.length - 1] : restantes.find((c) => c.id === s.activeCommandeId);
   save({
     ...s,
     commandes: restantes,
-    activeCommandeId: nextActive.id,
-    nomCommande: nextActive.nom,
-    lignes: nextActive.lignes,
-    fichiers: nextActive.fichiers,
-    decisions: nextActive.decisions,
+    activeCommandeId: nextActive?.id || '',
+    nomCommande: nextActive?.nom || '',
+    lignes: nextActive?.lignes || [],
+    fichiers: nextActive?.fichiers || [],
+    decisions: nextActive?.decisions || {},
   });
   return true;
 }
@@ -724,6 +724,17 @@ export function addVersion(etape: string, nomFichier: string, nbLignes?: number,
       : c
   );
   save({ ...s, commandes });
+}
+
+/** Effacer les données démo du navigateur (mode démo uniquement). */
+export function reinitialiserDemo() {
+  if (DB_MODE) return;
+  try {
+    localStorage.removeItem(KEY);
+    localStorage.removeItem(PREFS_KEY);
+  } catch { /* ignore */ }
+  memory = null;
+  save(defaultState());
 }
 
 /** Recharger l'état depuis la base (bouton « Rafraîchir »). */

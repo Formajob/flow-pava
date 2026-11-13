@@ -115,6 +115,28 @@ Routes API créées (serveur uniquement, clé service_role jamais exposée au na
 
 Sur Vercel : **Settings → Environment Variables** → ajouter les deux mêmes variables, puis **Redeploy**.
 
+## Accès et rôles
+
+La connexion n'accepte que les adresses définies dans `src/lib/pava-users.ts` :
+
+| Adresse | Rôle | Droits |
+|---|---|---|
+| `jawad@acx.ma` | **Analyste / Admin / Directeur (au choix)** | tous les rôles : choisir à la connexion (boutons) ou dans Administration |
+| `Ghita.Khalil@videotron.com` | **Analyste** (fixe) | importer et analyser, montants masqués, aucune validation |
+| `marzouk.ousmane@videotron.com` | **Directeur** (fixe) | tout voir, validation définitive (suppression interdite après) |
+
+- Sans session, `/admin` redirige vers `/login`.
+- Page `/login` : les trois boutons Analyste / Admin / Directeur choisissent le rôle du compte multi-rôles (`jawad@acx.ma`).
+- Un rôle demandé non autorisé est ignoré (rôle fixe conservé) — un compte à rôle fixe ne peut pas escalader.
+- Mot de passe : n'importe lequel en démo — à brancher plus tard sur une table `pava_utilisateurs`.
+- **En production (Vercel), `NEXTAUTH_SECRET` est obligatoire** sinon la connexion échoue (`NO_SECRET`). Générer par ex. avec `openssl rand -base64 32` et l'ajouter aux variables d'environnement.
+
+## Portail flow.acx.ma
+
+Le portail (`acx-flow-portal`) redirige vers PAVA sans afficher d'autre activité :
+- `jawad@acx.ma` et toutes les adresses `@videotron.com` → `https://flow-pava.vercel.app/login?email=…&from=flow`
+- L'ancien panneau Xceed (AMC / Juridique) a été retiré de la page de connexion.
+
 ## Règles
 
 - Ordre des imports CSS : `globals.css` puis `glass.css`.

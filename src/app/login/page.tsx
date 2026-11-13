@@ -13,7 +13,6 @@
 import { Suspense, useEffect, useState, FormEvent, ChangeEvent } from 'react'
 import { signIn, useSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
 
 export default function LoginPage() {
   return (
@@ -55,13 +54,13 @@ function LoginForm() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [legalOpen, setLegalOpen] = useState(false)
+  const [roleChoisi, setRoleChoisi] = useState<'analyste' | 'admin' | 'directeur'>('admin')
   const fromFlow = searchParams.get('from') === 'flow'
 
   useEffect(() => {
     const prefilled = searchParams.get('email')
     if (prefilled && prefilled.includes('@')) setEmail(prefilled.trim().toLowerCase())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [searchParams])
 
   // Mentions légales / confidentiel — affichées une fois par session (comme VDM)
   useEffect(() => {
@@ -86,7 +85,7 @@ function LoginForm() {
     setError('')
     setIsLoading(true)
     try {
-      const result = await signIn('credentials', { email, password, redirect: false })
+      const result = await signIn('credentials', { email, password, role: roleChoisi, redirect: false })
       if (result?.error) {
         setError('Identifiants incorrects. Vérifiez votre adresse et votre mot de passe.')
         setIsLoading(false)
@@ -192,12 +191,13 @@ function LoginForm() {
               </p>
 
               <div className="lg-demo">
-                <p>Accès démo</p>
+                <p>Accès Jawad · choisir le rôle</p>
                 <div>
-                  <Link href="/admin">Admin</Link>
-                  <Link href="/admin">Analyste</Link>
-                  <Link href="/admin">Directeur</Link>
+                  <button type="button" className={roleChoisi === 'analyste' ? 'actif' : ''} onClick={() => { setRoleChoisi('analyste'); setEmail('jawad@acx.ma') }}>Analyste</button>
+                  <button type="button" className={roleChoisi === 'admin' ? 'actif' : ''} onClick={() => { setRoleChoisi('admin'); setEmail('jawad@acx.ma') }}>Admin</button>
+                  <button type="button" className={roleChoisi === 'directeur' ? 'actif' : ''} onClick={() => { setRoleChoisi('directeur'); setEmail('jawad@acx.ma') }}>Directeur</button>
                 </div>
+                <p className="lg-demo-hint">Rôles fixes : Ghita.Khalil@videotron.com → Analyste · marzouk.ousmane@videotron.com → Directeur</p>
               </div>
 
               <p className="lg-ver">Login autonome · v6</p>
@@ -340,6 +340,11 @@ body:has(.lg) .g-aurora{display:none!important}
 .lg-demo{margin-top:22px;padding-top:18px;border-top:1px solid rgba(15,35,80,.08)}
 .lg-demo p{text-align:center;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8290ab;margin-bottom:10px}
 .lg-demo div{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.lg-demo button{display:flex;align-items:center;justify-content:center;height:38px;border-radius:11px;
+  border:1px solid rgba(15,35,80,.16);background:#fff;color:#0b1730;font-size:12px;font-weight:700;cursor:pointer;transition:.2s}
+.lg-demo button:hover{border-color:#2563eb;color:#1d4ed8}
+.lg-demo button.actif{border-color:#2563eb;background:#2563eb;color:#fff}
+.lg-demo-hint{margin-top:10px;text-align:center;font-size:11px;color:#8290ab}
 .lg .lg-demo a{display:flex;align-items:center;justify-content:center;height:38px;border-radius:11px;
   border:1px solid rgba(15,35,80,.16);background:#fff;color:#0b1730;font-size:12px;font-weight:700;transition:.2s}
 .lg .lg-demo a:hover{border-color:#2563eb;color:#1d4ed8}
