@@ -99,8 +99,9 @@ export interface PavaState {
 const KEY = 'flow-pava-v1';
 const PREFS_KEY = 'flow-pava-prefs-v1';
 
-/** Mode base de données actif dès que l'URL Supabase est fournie. */
-const DB_MODE = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
+/** Mode base de données actif uniquement si une vraie URL Supabase est fournie
+ *  (un placeholder comme « URL_DU_PROJET » garde le mode démo + bandeau). */
+const DB_MODE = /^https?:\/\//.test(process.env.NEXT_PUBLIC_SUPABASE_URL || '');
 /** Vrai = données enregistrées dans Supabase ; faux = mode démo localStorage. */
 export const EST_MODE_DB = DB_MODE;
 
