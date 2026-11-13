@@ -66,7 +66,39 @@ Mêmes variables dans **Vercel → ton projet → Settings → Environment Varia
 
 Puis **Deployments → … → Redeploy** (important : les variables ne s'appliquent qu'aux déploiements faits après leur ajout).
 
-## 6. Erreurs connues
+## 6. Gérer les accès et les mots de passe (table `pava_utilisateurs`)
+
+Les comptes ne sont **plus dans le code** : ils sont dans la table Supabase `pava_utilisateurs`.
+
+**a) Créer la table (une seule fois)** — Supabase → SQL Editor → coller le contenu de
+`supabase/migrations/002_pava_utilisateurs.sql` → **Run**.
+Le script crée la table et les 3 comptes existants :
+
+| Adresse | Rôle | Mot de passe par défaut |
+|---|---|---|
+| `jawad@acx.ma` | Admin (+ Analyste/Directeur au choix) | `pava2026` |
+| `ghita.khalil@videotron.com` | Analyste | `pava2026` |
+| `marzouk.ousmane@videotron.com` | Directeur | `pava2026` |
+
+**b) Changer un mot de passe ou ajouter un utilisateur** — connexion Admin → page
+**Administration** → section « Comptes utilisateurs » :
+- bouton **Mot de passe** : en définir un nouveau (6 caractères minimum) ;
+- formulaire **Ajouter un utilisateur** : e-mail, nom, rôle (Analyste / Admin / Directeur),
+  mot de passe, case **Multi-rôles** si la personne doit choisir son rôle à la connexion ;
+- **Désactiver** bloque la connexion sans supprimer l'historique ; **Supprimer** retire le compte.
+
+Les mots de passe sont stockés **hashés** (scrypt) — jamais en clair, et jamais affichés.
+Un compte désactivé ou supprimé est refusé dès la connexion suivante.
+
+**c) Sécurité** : la table est en RLS sans policy → inaccessible depuis l'extérieur avec la
+clé anon ; seules les routes API du serveur (clé service_role) y touchent, et elles exigent
+une session Admin. La gestion des comptes n'apparaît que pour l'Admin connecté.
+
+> ⚠️ Après avoir exécuté le script SQL, les mots de passe deviennent obligatoires :
+> `jawad@acx.ma / pava2026` pour la première connexion — **change-le ensuite**
+> depuis la page Administration.
+
+## 7. Erreurs connues
 
 | Message | Cause | Solution |
 |---|---|---|

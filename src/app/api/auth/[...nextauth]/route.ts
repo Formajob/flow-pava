@@ -1,17 +1,20 @@
 import NextAuth from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { trouverUtilisateur, type PavaRole } from '@/lib/pava-users';
+import { chercherUtilisateurDb, verifierMotDePasse } from '@/lib/pava/auth-db';
+import { getSupabase } from '@/lib/supabase';
 
 /**
  * NextAuth — route API /api/auth/[...nextauth]
- * Nécessaire pour useSession() et signIn() sur /login.
  *
- * Accès : seules les adresses de src/lib/pava-users.ts peuvent se connecter.
- * Compte multi-rôles (jawad@acx.ma) : le rôle choisi à la connexion est
- * honoré s'il fait partie des rôles autorisés. Les autres adresses ont un
- * rôle fixe, quel que soit le rôle demandé.
- * Mot de passe : non vérifié en démo (brancher plus tard la table
- * pava_utilisateurs avec de vrais mots de passe).
+ * Accès (mode base de données — table pava_utilisateurs) :
+ *   - e-mail doit exister et le compte être actif ;
+ *   - le mot de passe est vérifié contre le hash scrypt ;
+ *   - multi_roles = TRUE : l'utilisateur choisit son rôle à la connexion
+ *     (boutons Analyste / Admin / Directeur) ; sinon rôle fixe.
+ *
+ * Mode démo (Supabase non configuré) : comptes de src/lib/pava-users.ts,
+ * mot de passe non vérifié — pour développer sans la base.
  */
 const handler = NextAuth({
   session: { strategy: 'jwt' },
@@ -28,13 +31,25 @@ const handler = NextAuth({
         const password = credentials?.password;
         if (!email || !password) return null;
 
-        const utilisateur = trouverUtilisateur(email);
-        if (!utilisateur) return null; // adresse non autorisée
+        if (getSupabase()) {
+          // --- Mode base : table pava_utilisateurs ---
+          const u = await chercherUtilisateurDb(email);
+          if (!u) return null; // inconnu ou désactivé
+          if (!verifierMotDePasse(password, u.mot_de_passe)) return null; // mauvais mot de passe
 
-        // Rôle demandé (boutons d'accès) : honoré seulement si autorisé.
+          const roleDefaut = u.role as PavaRole;
+          const roles: PavaRole[] = u.multi_roles ? ['analyste', 'admin', 'directeur'] : [roleDefaut];
+          const demande = (credentials?.role || '').trim().toLowerCase() as PavaRole;
+          const role = roles.includes(demande) ? demande : roleDefaut;
+
+          return { id: u.email, email: u.email, name: u.nom, role, roles };
+        }
+
+        // --- Mode démo : comptes en code, mot de passe libre ---
+        const utilisateur = trouverUtilisateur(email);
+        if (!utilisateur) return null;
         const demande = (credentials?.role || '').trim().toLowerCase() as PavaRole;
         const role = utilisateur.roles.includes(demande) ? demande : utilisateur.role;
-
         return { id: utilisateur.email, email: utilisateur.email, name: utilisateur.nom, role, roles: utilisateur.roles };
       },
     }),

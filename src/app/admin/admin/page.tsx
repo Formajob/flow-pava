@@ -1,21 +1,29 @@
 'use client';
 
 /**
- * Administration PAVA — accès et comptes.
- * Compte multi-rôles (jawad@acx.ma) : sélection du rôle Analyste / Admin /
- * Directeur. Les autres adresses ont un rôle fixe ( Analyste sans montants,
- * Directeur validation finale).
+ * Administration PAVA — accès, comptes et stockage.
+ * Comptes en base (pava_utilisateurs) : l'Admin peut ajouter des
+ * utilisateurs, changer les mots de passe, désactiver ou supprimer.
  */
 
-import { useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { getPavaState, subscribePava, setPavaRole, reinitialiserDemo, EST_MODE_DB, type Role } from '@/lib/pava-store';
-import { UTILISATEURS_PAVA, TITRE_ROLE, type PavaRole } from '@/lib/pava-users';
+import { TITRE_ROLE, type PavaRole } from '@/lib/pava-users';
 
-const DROITS: Record<string, string[]> = {
-  admin: ['Importer et analyser', 'Voir tous les montants', 'Corriger les lignes', 'Modifier le Price Plan', 'Valider (1er niveau)'],
-  analyste: ['Importer et analyser', 'Montants masqués', 'Signaler les incohérences', 'Aucune validation'],
-  directeur: ['Tout voir', 'Valider définitivement (Directeur)', 'Suppression interdite après validation'],
+interface UtilisateurRow {
+  id: string;
+  email: string;
+  nom: string;
+  role: PavaRole;
+  multi_roles: boolean;
+  actif: boolean;
+}
+
+const DROITS: Record<string, string> = {
+  admin: 'Tout voir, corriger, Price Plan, valider (1er niveau), gérer les comptes',
+  analyste: 'Importer et analyser · montants masqués · aucune validation',
+  directeur: 'Tout voir · validation définitive · suppression interdite après validation',
 };
 
 export default function AdminPage() {
@@ -24,6 +32,69 @@ export default function AdminPage() {
   const role = snap.role;
   const rolesAutorises = (session?.user?.roles as PavaRole[] | undefined) || [];
   const multiRoles = rolesAutorises.length > 1;
+
+  const [users, setUsers] = useState<UtilisateurRow[] | null>(null);
+  const [msgUsers, setMsgUsers] = useState('');
+  const [nouveau, setNouveau] = useState({ email: '', nom: '', role: 'analyste', multiRoles: false, motDePasse: '' });
+  const gestionActive = EST_MODE_DB && role === 'admin';
+
+  const chargerUsers = useCallback(async () => {
+    try {
+      const r = await fetch('/api/pava/utilisateurs');
+      const d = await r.json();
+      if (!r.ok) { setMsgUsers(d.error || 'Chargement impossible.'); setUsers([]); return; }
+      setUsers(d.utilisateurs || []);
+      setMsgUsers('');
+    } catch {
+      setUsers([]);
+      setMsgUsers('Chargement des comptes impossible.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (gestionActive) void chargerUsers();
+  }, [gestionActive, chargerUsers]);
+
+  const creerUser = async () => {
+    setMsgUsers('Création…');
+    const r = await fetch('/api/pava/utilisateurs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nouveau),
+    });
+    const d = await r.json();
+    if (!r.ok) { setMsgUsers(d.error || 'Création impossible.'); return; }
+    setMsgUsers(`Compte « ${d.utilisateur.email} » créé.`);
+    setNouveau({ email: '', nom: '', role: 'analyste', multiRoles: false, motDePasse: '' });
+    void chargerUsers();
+  };
+
+  const majUser = async (id: string, patch: Record<string, unknown>, apres?: string) => {
+    const r = await fetch(`/api/pava/utilisateurs/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const d = await r.json();
+    if (!r.ok) { setMsgUsers(d.error || 'Modification impossible.'); return; }
+    if (apres) setMsgUsers(apres);
+    void chargerUsers();
+  };
+
+  const supprimerUser = async (u: UtilisateurRow) => {
+    if (!confirm(`Supprimer le compte « ${u.email} » ?`)) return;
+    const r = await fetch(`/api/pava/utilisateurs/${u.id}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { setMsgUsers(d.error || 'Suppression impossible.'); return; }
+    setMsgUsers(`Compte « ${u.email} » supprimé.`);
+    void chargerUsers();
+  };
+
+  const changerMdp = async (u: UtilisateurRow) => {
+    const mdp = prompt(`Nouveau mot de passe pour ${u.email} (6 caractères minimum) :`);
+    if (!mdp) return;
+    await majUser(u.id, { motDePasse: mdp }, `Mot de passe de ${u.email} changé.`);
+  };
 
   return (
     <>
@@ -64,12 +135,7 @@ export default function AdminPage() {
                 <p style={{ margin: '0 0 8px', fontSize: 12.5, fontWeight: 700 }}>Changer de rôle (compte multi-rôles)</p>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {rolesAutorises.map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      className={`g-btn ${role === r ? '' : 'g-btn--ghost'}`}
-                      onClick={() => setPavaRole(r as Role)}
-                    >
+                    <button key={r} type="button" className={`g-btn ${role === r ? '' : 'g-btn--ghost'}`} onClick={() => setPavaRole(r as Role)}>
                       {TITRE_ROLE[r]}
                     </button>
                   ))}
@@ -101,10 +167,8 @@ export default function AdminPage() {
           {EST_MODE_DB ? (
             <>Les données sont enregistrées dans Supabase (base <b>flow</b>, tables <b>pava_*</b>) via les routes API du serveur.</>
           ) : (
-            <>
-              Les données restent dans <b>ce navigateur</b> (localStorage) — rien n&apos;est envoyé à Supabase.
-              Créez <b>.env.local</b> avec <b>NEXT_PUBLIC_SUPABASE_URL</b> et <b>SUPABASE_SERVICE_ROLE_KEY</b> puis relancez le serveur.
-            </>
+            <>Les données restent dans <b>ce navigateur</b> (localStorage) — rien n&apos;est envoyé à Supabase.
+            Créez <b>.env.local</b> avec <b>NEXT_PUBLIC_SUPABASE_URL</b> et <b>SUPABASE_SERVICE_ROLE_KEY</b> puis relancez le serveur.</>
           )}
         </p>
         {!EST_MODE_DB && (
@@ -121,46 +185,97 @@ export default function AdminPage() {
             </button>
           </div>
         )}
-        <div className="g-card-foot">
-          <span>Test rapide : <b>/api/pava/state</b> doit renvoyer les commandes en mode base</span>
-          <span>{EST_MODE_DB ? 'Connecté' : 'Non configuré'}</span>
-        </div>
       </section>
 
       <section className="g-card g-glass g-rise">
         <div className="g-card-head">
           <div>
-            <h3 className="g-card-title">Comptes autorisés</h3>
-            <p className="g-card-sub">Seules ces adresses peuvent se connecter à la plateforme.</p>
+            <h3 className="g-card-title">Comptes utilisateurs</h3>
+            <p className="g-card-sub">
+              {EST_MODE_DB
+                ? 'Gérés dans la table pava_utilisateurs — ajoutez des comptes, changez les mots de passe, désactivez un accès.'
+                : 'En mode base, les comptes seront gérables ici (table pava_utilisateurs).'}
+            </p>
           </div>
         </div>
-        <div className="g-table-wrap">
-          <table className="g-table">
-            <thead><tr><th>Adresse</th><th>Nom</th><th>Rôle</th><th>Droits</th></tr></thead>
-            <tbody>
-              {UTILISATEURS_PAVA.map((u) => (
-                <tr key={u.email}>
-                  <td>{u.email}</td>
-                  <td><b>{u.nom}</b></td>
-                  <td>
-                    {u.roles.length > 1 ? (
-                      <span className="g-badge is-info"><i className="g-dot" />Analyste · Admin · Directeur (au choix)</span>
-                    ) : (
-                      <span className={`g-badge ${u.role === 'directeur' ? 'is-ok' : u.role === 'admin' ? 'is-info' : 'is-warn'}`}>
-                        <i className="g-dot" />{TITRE_ROLE[u.role]}
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ fontSize: 12.5 }}>{DROITS[u.role].join(' · ')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="g-card-foot">
-          <span>Mot de passe : non vérifié en démo (à brancher sur la base)</span>
-          <span>Validation mensuelle : Admin puis Directeur</span>
-        </div>
+
+        {gestionActive ? (
+          <>
+            <div className="g-table-wrap">
+              <table className="g-table">
+                <thead><tr><th>Adresse</th><th>Nom</th><th>Rôle</th><th>État</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {(users || []).map((u) => (
+                    <tr key={u.id}>
+                      <td>{u.email}{u.email === session?.user?.email ? ' (vous)' : ''}</td>
+                      <td><b>{u.nom}</b></td>
+                      <td>
+                        <span className={`g-badge ${u.role === 'directeur' ? 'is-ok' : u.role === 'admin' ? 'is-info' : 'is-warn'}`}>
+                          <i className="g-dot" />{TITRE_ROLE[u.role]}{u.multi_roles ? ' + au choix' : ''}
+                        </span>
+                      </td>
+                      <td>{u.actif ? 'Actif' : 'Désactivé'}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => changerMdp(u)}>Mot de passe</button>
+                          <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => majUser(u.id, { actif: !u.actif }, u.actif ? 'Compte désactivé.' : 'Compte réactivé.')}>
+                            {u.actif ? 'Désactiver' : 'Réactiver'}
+                          </button>
+                          {u.email !== session?.user?.email && (
+                            <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => supprimerUser(u)}>Supprimer</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {users && users.length === 0 && (
+                    <tr><td colSpan={5}>Aucun compte — la table pava_utilisateurs est vide (exécutez supabase/migrations/002_pava_utilisateurs.sql).</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--g-line, #e4e8f1)' }}>
+              <p style={{ margin: '0 0 10px', fontSize: 12.5, fontWeight: 700 }}>Ajouter un utilisateur</p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
+                <label style={{ flex: '1 1 180px', fontSize: 12, fontWeight: 700 }}>E-mail
+                  <input className="g-input" style={{ marginTop: 4 }} value={nouveau.email} placeholder="prenom@videotron.com" onChange={(e) => setNouveau({ ...nouveau, email: e.target.value })} />
+                </label>
+                <label style={{ flex: '1 1 140px', fontSize: 12, fontWeight: 700 }}>Nom
+                  <input className="g-input" style={{ marginTop: 4 }} value={nouveau.nom} placeholder="Prénom Nom" onChange={(e) => setNouveau({ ...nouveau, nom: e.target.value })} />
+                </label>
+                <label style={{ fontSize: 12, fontWeight: 700 }}>Rôle
+                  <select className="g-input" style={{ marginTop: 4 }} value={nouveau.role} onChange={(e) => setNouveau({ ...nouveau, role: e.target.value })}>
+                    <option value="analyste">Analyste</option>
+                    <option value="admin">Admin</option>
+                    <option value="directeur">Directeur</option>
+                  </select>
+                </label>
+                <label style={{ flex: '1 1 150px', fontSize: 12, fontWeight: 700 }}>Mot de passe (≥ 6)
+                  <input className="g-input" style={{ marginTop: 4 }} type="password" value={nouveau.motDePasse} onChange={(e) => setNouveau({ ...nouveau, motDePasse: e.target.value })} />
+                </label>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, fontWeight: 700, paddingBottom: 8 }}>
+                  <input type="checkbox" checked={nouveau.multiRoles} onChange={(e) => setNouveau({ ...nouveau, multiRoles: e.target.checked })} />
+                  Multi-rôles
+                </label>
+                <button type="button" className="g-btn" onClick={creerUser}>Créer</button>
+              </div>
+              {msgUsers && <p style={{ marginTop: 10, fontSize: 13 }}><b>{msgUsers}</b></p>}
+            </div>
+          </>
+        ) : (
+          <div className="g-table-wrap">
+            <table className="g-table">
+              <thead><tr><th>Adresse</th><th>Nom</th><th>Rôle</th><th>Droits</th></tr></thead>
+              <tbody>
+                <tr><td>jawad@acx.ma</td><td><b>Jawad</b></td><td><span className="g-badge is-info"><i className="g-dot" />Analyste · Admin · Directeur (au choix)</span></td><td style={{ fontSize: 12.5 }}>{DROITS.admin}</td></tr>
+                <tr><td>ghita.khalil@videotron.com</td><td><b>Ghita Khalil</b></td><td><span className="g-badge is-warn"><i className="g-dot" />Analyste</span></td><td style={{ fontSize: 12.5 }}>{DROITS.analyste}</td></tr>
+                <tr><td>marzouk.ousmane@videotron.com</td><td><b>Marzouk Ousmane</b></td><td><span className="g-badge is-ok"><i className="g-dot" />Directeur</span></td><td style={{ fontSize: 12.5 }}>{DROITS.directeur}</td></tr>
+              </tbody>
+            </table>
+            {!EST_MODE_DB && <p style={{ marginTop: 10, fontSize: 12.5 }}>Mode démo : comptes en code (src/lib/pava-users.ts), mot de passe non vérifié.</p>}
+          </div>
+        )}
       </section>
     </>
   );
