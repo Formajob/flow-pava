@@ -260,12 +260,33 @@ function ecrirePrefs(p: Prefs) {
 let dbState: PavaState | null = null;
 let dbErreur = '';
 
+/**
+ * État vide de chargement — RÉFÉRENCE STABLE OBLIGATOIRE.
+ * useSyncExternalStore appelle getPavaState() à chaque rendu : si l'état
+ * de chargement était un nouvel objet à chaque appel, React détecterait un
+ * changement infini → « Minified React error #185 » (boucle de rendu).
+ * On le met donc en cache (reconstruit seulement si dbErreur change).
+ */
+let etatChargementCache: PavaState | null = null;
+
 function etatVide(enChargement = false): PavaState {
+  if (enChargement) {
+    const err = dbErreur || undefined;
+    if (!etatChargementCache || etatChargementCache.erreur !== err) {
+      etatChargementCache = {
+        role: 'admin', mois: '', lignes: [], rules: DEFAULT_RULES,
+        fichiers: [], params: DEFAULT_PARAMS, decisions: {}, statutFacture: {},
+        commandes: [], activeCommandeId: '', nomCommande: '',
+        enChargement: true, erreur: err,
+      };
+    }
+    return etatChargementCache;
+  }
   return {
     role: 'admin', mois: '', lignes: [], rules: DEFAULT_RULES,
     fichiers: [], params: DEFAULT_PARAMS, decisions: {}, statutFacture: {},
     commandes: [], activeCommandeId: '', nomCommande: '',
-    enChargement, erreur: dbErreur || undefined,
+    enChargement: false, erreur: dbErreur || undefined,
   };
 }
 
