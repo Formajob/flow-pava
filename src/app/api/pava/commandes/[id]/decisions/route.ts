@@ -46,7 +46,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
   const { id } = await params;
 
-  let body: { refs?: string[]; statut?: string };
+  let body: { refs?: string[]; statut?: string; commentaire?: string };
   try {
     body = await req.json();
   } catch {
@@ -57,7 +57,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const statut = body.statut || 'ouvert';
   if (refs.length === 0) return NextResponse.json({ error: 'Aucune référence fournie.' }, { status: 400 });
 
-  const rangees = refs.map((ref) => ({ commande_id: id, ref_anomalie: ref, statut, commentaire: '' }));
+  const commentaire = (body.commentaire || '').trim();
+  const rangees = refs.map((ref) => ({ commande_id: id, ref_anomalie: ref, statut, commentaire }));
   const { error } = await supabase
     .from('pava_decisions')
     .upsert(rangees, { onConflict: 'commande_id,ref_anomalie' });

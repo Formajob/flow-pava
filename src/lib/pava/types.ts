@@ -7,7 +7,26 @@
 export type Nature = 'RENO' | 'AJOUT' | 'SACA' | 'NON_FACTUREE';
 export type FormatFeuille = 'VL' | 'ACJ' | 'COM';
 export type Confiance = 'REGLE' | 'PROBABLE' | 'A_VALIDER' | 'INFO';
-export type StatutAnomalie = 'ouvert' | 'valide' | 'rejete';
+export type StatutAnomalie = 'ouvert' | 'valide' | 'rejete' | 'ignore' | 'corrige';
+
+/** Correction automatique proposée par une règle (appliquée en un clic, groupe ou sélection). */
+export type FixAction = { type: 'supprimer' } | { type: 'montant'; valeur: number };
+
+/** Champs de la ligne source conservés à l'import (la ligne `brut` n'est jamais envoyée au navigateur). */
+export interface LigneMeta {
+  format: FormatFeuille;
+  cle_com: string;
+  no_serv: string;
+  nb_mois_eng: number | null;
+  date_compl: string | null;
+  mois_compl: string | null;
+  tp_com_ci: string;
+  raison: string;
+  nom_client: string;
+  vendeur_no: string;
+  vendeur_nom: string;
+  type_cmd: string;
+}
 
 /** Une ligne normalisée = une ligne de la facture. */
 export interface PavaRow {
@@ -33,6 +52,14 @@ export interface PavaRow {
   raison: string;
   paiement_pav: number | null;
   ligne_total: boolean;
+  /** Id de la ligne dans l'application (pour corriger / supprimer). */
+  ligne_id: string;
+  no_serv: string;
+  type_cmd: string;
+  /** Faux si le prix ne peut pas être contrôlé (format ACJ : pas de forfait ni d'engagement). */
+  verifiable: boolean;
+  /** Vrai si la ligne vient d'un ancien import sans métadonnées (règles dégradées). */
+  ancienne: boolean;
   // Recalculé par le moteur
   montant_attendu?: number | null;
   ecart?: number | null;
@@ -55,6 +82,16 @@ export interface Anomaly {
   commentaire: string;
   famille: string;
   periode: string;
+  /** Id de la ligne concernée (vide pour une alerte globale). */
+  ligne_id: string;
+  /** 'ligne' = une ligne précise ; 'global' = alerte sur tout le fichier (R11, R12). */
+  scope: 'ligne' | 'global';
+  /** Clé de regroupement : règle + raison. */
+  groupe: string;
+  /** Correction automatique proposée, s'il y en a une. */
+  fix?: FixAction;
+  /** Nom du client (affichage dans le tableau de contrôle). */
+  nom_client?: string;
 }
 
 /** Paramètres éditables (section 3 + 4). */

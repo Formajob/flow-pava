@@ -5,31 +5,32 @@
 
 import type { PavaParams, PavaRow } from './types';
 
+/** Prix unitaire attendu, ou null si la ligne n'est pas contrôlable / hors grille. */
 export function prixUnitaire(row: PavaRow, params: PavaParams): number | null {
+  // Format ACJ : pas de forfait ni d'engagement → on ne peut pas recalculer un ajout Internet / TPC
+  if (!row.verifiable) return null;
+
   const code = (row.code_service || '').toUpperCase();
   const puissance = (row.puissance || '').trim();
   const eng = row.nb_mois_eng;
 
-  // Renouvellement : 65 $ par ligne
-  if (row.nature === 'RENO') {
+  // Renouvellement : 65 $ par ligne (y compris un renouvellement saisi en SACA ou « non facturée »)
+  const renouv = (row.type_cmd || '').toUpperCase().includes('RENOUVEL');
+  if (row.nature === 'RENO' || ((row.nature === 'SACA' || row.nature === 'NON_FACTUREE') && renouv)) {
     return params.renouvellement;
   }
-
-  // SACA : price plan pour branchement (65 pour renouvellement géré via nature RENO)
-  // Les lignes SACA ici sont des branchements : on applique le price plan ajout ci-dessous.
 
   // Internet (CAB)
   if (row.famille === 'CAB') {
     if (puissance === '50' || code.includes('50/50')) return params.forfait5050;
-    if (puissance === '500') return params.internet['500'] ?? 300; // exception : prix du 400
+    if (puissance === '500') return params.internet['500'] ?? params.internet['400'] ?? 300; // exception : prix du 400
     if (puissance === 'Giga' || puissance === '940') return params.internet['Giga'] ?? 300;
     if (puissance === '400') return params.internet['400'] ?? 300;
     if (puissance === '200') return params.internet['200'] ?? 250;
     if (puissance === '100') return params.internet['100'] ?? 200;
     if (puissance === '15') return params.internet['15'] ?? 150;
-    // Fallback par code
-    if (code.includes('GIGA')) return params.internet['Giga'] ?? 300;
-    if (code.includes('500')) return params.internet['500'] ?? 300;
+    if (code.includes('GIGA') || code.includes('1GB')) return params.internet['Giga'] ?? 300;
+    if (code.includes('500')) return params.internet['500'] ?? params.internet['400'] ?? 300;
     if (code.includes('400')) return params.internet['400'] ?? 300;
     if (code.includes('200')) return params.internet['200'] ?? 250;
     if (code.includes('100')) return params.internet['100'] ?? 200;
@@ -46,19 +47,10 @@ export function prixUnitaire(row: PavaRow, params: PavaParams): number | null {
     return null;
   }
 
-  // SIM / TMO (CELL)
   if (row.famille === 'CELL') return params.sim;
-
-  // TV (NUM)
   if (row.famille === 'NUM') return params.tv;
-
-  // TIPN
   if (row.famille === 'TIPN') return params.tipn;
-
-  // WIFIPRO
   if (row.famille === 'WIFIPRO') return params.wifipro;
-
-  // Redondance
   if (row.famille === 'REDO') return params.redo;
 
   return null;

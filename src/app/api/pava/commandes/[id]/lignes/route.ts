@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { assemblerLignes, sansBrut } from '@/lib/pava/blob-db';
+import type { PavaLigne } from '@/lib/pava-store';
 
 /**
  * GET /api/pava/commandes/[id]/lignes — lignes d'UNE commande,
  * chargées à la demande (les autres commandes restent en métadonnées).
  * Les lignes supprimées sont exclues, les corrections appliquées,
  * et la colonne source `brut` n'est jamais envoyée (payload léger).
+ * Inclut aussi les références de rapprochement : lignes COM (R08)
+ * et totaux de synthèse (R12) des fichiers importés.
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const supabase = getSupabase();
@@ -19,5 +22,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   const lignes = await assemblerLignes(id);
-  return NextResponse.json({ lignes: sansBrut(lignes) });
+  const { data: refs } = await supabase
+    .from('pava_fichiers')
+    .select('com, synthese')
+    .eq('commande_id', id);
+  const com: PavaLigne[] = [];
+  let synthese: { quantite: number | null; montant: number | null } | null = null;
+  for (const f of refs || []) {
+    for (const c of (f.com as PavaLigne[] | null) || []) com.push(sansBrut([c])[0]);
+    if (!synthese && f.synthese) synthese = f.synthese as { quantite: number | null; montant: number | null };
+  }
+  return NextResponse.json({ lignes: sansBrut(lignes), com, synthese });
 }

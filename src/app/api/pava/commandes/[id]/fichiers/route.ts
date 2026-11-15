@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { dbToFichier } from '@/lib/pava/db-map';
-import { recalculerStatsCommande } from '@/lib/pava/blob-db';
+import { recalculerStatsCommande, sansBrut } from '@/lib/pava/blob-db';
 import type { PavaLigne, ImportedFile } from '@/lib/pava-store';
 
 /**
@@ -14,14 +14,19 @@ import type { PavaLigne, ImportedFile } from '@/lib/pava-store';
  * `brut` est conservée dedans pour traçabilité mais n'est jamais
  * renvoyée au navigateur.
  *
- * Retour : { fichier, nbLignes, stats }
+ * Retour : { fichier, nbLignes, lignes (sans brut), stats }
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
   const { id } = await params;
 
-  let body: { fichier?: Partial<ImportedFile>; lignes?: PavaLigne[] };
+  let body: {
+    fichier?: Partial<ImportedFile>;
+    lignes?: PavaLigne[];
+    com?: Array<Record<string, unknown>>;
+    synthese?: { quantite: number | null; montant: number | null } | null;
+  };
   try {
     body = await req.json();
   } catch {
@@ -42,6 +47,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nb_lignes: lignes.length,
       mois: fichier.mois || null,
       contenu: [],
+      com: body.com || [],
+      synthese: body.synthese ?? null,
     })
     .select()
     .single();
@@ -76,5 +83,5 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     action: `Import ${fichier.nom} : ${lignes.length} lignes`,
   });
 
-  return NextResponse.json({ fichier: dbToFichier(fic), nbLignes: lignes.length, stats }, { status: 201 });
+  return NextResponse.json({ fichier: dbToFichier(fic), nbLignes: lignes.length, lignes: sansBrut(contenu as PavaLigne[]), stats }, { status: 201 });
 }

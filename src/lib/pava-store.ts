@@ -16,6 +16,7 @@
  */
 
 import type { PavaParams } from './pava/types';
+import type { LigneMeta } from './pava/types';
 import type { StatsCommande } from './pava/stats';
 import { DEFAULT_PARAMS } from './pava/types';
 
@@ -23,6 +24,14 @@ export type Role = 'analyste' | 'admin' | 'directeur';
 export type Categorie = 'AJOUT' | 'RENOUVELLEMENT' | 'SACA' | 'NON_FACTUREE';
 
 export interface PavaLigne {
+  /** Clé commande Videotron (CLE_COM) — rapprochement R07/O-8. */
+  cleCom?: string;
+  /** Engagement en mois (NB_MOIS_ENG) — prix TPC exact. */
+  engagement?: number | null;
+  /** Date de complétion (DT_COMPL_COM) — S-2, détection d'inversion. */
+  dateCompl?: string | null;
+  /** Marqueur déménagement détecté dans la ligne source (O-9). */
+  demenagement?: string;
   id: string;
   mois: string;
   compte: string;
@@ -43,6 +52,8 @@ export interface PavaLigne {
   ref?: string;
   feuille?: string;
   ligneExcel?: number;
+  /** Champs normalisés de la ligne source (clé commande, n° service, engagement, dates…) — envoyés au navigateur. */
+  meta?: LigneMeta;
   /** Ligne source brute du fichier Excel — conservée en DB pour traçabilité. */
   brut?: Record<string, unknown>;
 }
@@ -79,6 +90,12 @@ export interface Commande {
   etape: string;
   /** Totaux pré-calculés (mode base) — le tableau de bord n'a pas besoin des lignes. */
   stats?: StatsCommande;
+  /** Lignes COM importées comme RÉFÉRENCE (règle R08) — jamais facturables. */
+  com?: PavaLigne[];
+  /** Totaux lus sur la feuille synthèse du fichier (règle R12). */
+  synthese?: { quantite: number | null; montant: number | null } | null;
+  /** Index compact des renouvellements des AUTRES commandes (règle R03). */
+  renouvellements?: Array<{ periode: string; noCli: string; codeService: string; feuille: string; ligneExcel: number }>;
 }
 
 export interface PavaState {
@@ -93,6 +110,10 @@ export interface PavaState {
   commandes: Commande[];
   activeCommandeId: string;
   nomCommande: string;
+  /** Références de rapprochement de la commande active (moteur R03/R08/R12). */
+  com: PavaLigne[];
+  synthese: { quantite: number | null; montant: number | null } | null;
+  renouvellements: Array<{ periode: string; noCli: string; codeService: string; feuille: string; ligneExcel: number }>;
   /** Vrai pendant le premier chargement depuis la base. */
   enChargement?: boolean;
   /** Dernière erreur de synchronisation avec la base (mode DB). */
@@ -195,6 +216,7 @@ function defaultState(): PavaState {
     fichiers: [], params: DEFAULT_PARAMS, decisions: {},
     statutFacture: { '2026-09': 'validee', '2026-10': 'en_cours' },
     commandes, activeCommandeId: 'cmd-oct-2026', nomCommande: 'Facture Octobre 2026',
+    com: [], synthese: null, renouvellements: [],
   };
 }
 
@@ -280,6 +302,7 @@ function etatVide(enChargement = false): PavaState {
         role: 'admin', mois: '', lignes: [], rules: DEFAULT_RULES,
         fichiers: [], params: DEFAULT_PARAMS, decisions: {}, statutFacture: {},
         commandes: [], activeCommandeId: '', nomCommande: '',
+        com: [], synthese: null, renouvellements: [],
         enChargement: true, erreur: err,
       };
     }
@@ -289,6 +312,7 @@ function etatVide(enChargement = false): PavaState {
     role: 'admin', mois: '', lignes: [], rules: DEFAULT_RULES,
     fichiers: [], params: DEFAULT_PARAMS, decisions: {}, statutFacture: {},
     commandes: [], activeCommandeId: '', nomCommande: '',
+    com: [], synthese: null, renouvellements: [],
     enChargement: false, erreur: dbErreur || undefined,
   };
 }
@@ -314,6 +338,9 @@ function assembler(commandes: Commande[], params: PavaParams): PavaState {
     commandes,
     activeCommandeId: active?.id || '',
     nomCommande: active?.nom || '',
+    com: active?.com || [],
+    synthese: active?.synthese || null,
+    renouvellements: active?.renouvellements || [],
     erreur: dbErreur || undefined,
   };
 }
@@ -366,9 +393,16 @@ async function chargerLignesCmd(id: string, force = false): Promise<void> {
   dbState = { ...etatDb(), enChargement: true };
   emit();
   try {
-    const r = await api<{ lignes: PavaLigne[] }>(`/commandes/${id}/lignes`);
+    const [r, h] = await Promise.all([
+      api<{ lignes: PavaLigne[]; com?: PavaLigne[]; synthese?: { quantite: number | null; montant: number | null } | null }>(`/commandes/${id}/lignes`),
+      api<{ renouvellements: Array<{ periode: string; noCli: string; codeService: string; feuille: string; ligneExcel: number }> }>(`/commandes/${id}/renouvellements`).catch(() => ({ renouvellements: [] })),
+    ]);
     lignesChargees.add(id);
-    const commandes = etatDb().commandes.map((c) => (c.id === id ? { ...c, lignes: r.lignes } : c));
+    const commandes = etatDb().commandes.map((c) =>
+      c.id === id
+        ? { ...c, lignes: r.lignes, com: r.com || [], synthese: r.synthese ?? null, renouvellements: h.renouvellements }
+        : c
+    );
     effacerErreur();
     dbState = { ...assembler(commandes, etatDb().params), enChargement: false };
   } catch (e) {
@@ -431,7 +465,7 @@ async function dbDeleteCommande(id: string): Promise<boolean> {
   return true;
 }
 
-async function dbAddImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[]): Promise<boolean> {
+async function dbAddImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[], refs?: RefsImport): Promise<boolean> {
   const s = etatDb();
   const idCmd = s.activeCommandeId;
   if (!idCmd) {
@@ -441,7 +475,7 @@ async function dbAddImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[]):
   try {
     const r = await api<{ fichier: ImportedFile; lignes: PavaLigne[] }>(`/commandes/${idCmd}/fichiers`, {
       method: 'POST',
-      body: JSON.stringify({ fichier, lignes: nouvelles }),
+      body: JSON.stringify({ fichier, lignes: nouvelles, com: refs?.com || [], synthese: refs?.synthese ?? null }),
     });
     const commandes = s.commandes.map((c) =>
       c.id === idCmd
@@ -451,6 +485,9 @@ async function dbAddImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[]):
     effacerErreur();
     dbState = assembler(commandes, s.params);
     emit();
+    // Recharger les références de rapprochement (COM, synthèse, historique)
+    // maintenant stockées côté base pour cette commande.
+    void chargerLignesCmd(idCmd, true);
     return true;
   } catch (e) {
     noterErreur(e);
@@ -506,6 +543,49 @@ async function dbDeleteLigne(id: string): Promise<boolean> {
   }
 }
 
+/** Corrections / suppressions en masse : un seul appel pour des centaines de lignes. */
+export interface CorrectionLigne {
+  id: string;
+  patch?: Partial<PavaLigne>;
+  supprimer?: boolean;
+}
+
+function appliquerCorrections(lignes: PavaLigne[], parId: Map<string, CorrectionLigne>): PavaLigne[] {
+  const out: PavaLigne[] = [];
+  for (const l of lignes) {
+    const c = parId.get(l.id);
+    if (!c) out.push(l);
+    else if (c.supprimer) continue;
+    else out.push({ ...l, ...(c.patch || {}) });
+  }
+  return out;
+}
+
+async function dbCorrigerBulk(items: CorrectionLigne[]): Promise<boolean> {
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd || items.length === 0) return false;
+  try {
+    const r = await api<{ ok: boolean; stats: StatsCommande }>(`/commandes/${idCmd}/lignes/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ items: items.map((i) => ({ ref: i.id, patch: i.patch, supprime: Boolean(i.supprimer) })) }),
+    });
+    const parId = new Map(items.map((i) => [i.id, i]));
+    const commandes = s.commandes.map((c) =>
+      c.id === idCmd
+        ? { ...c, stats: r.stats, lignes: appliquerCorrections(c.lignes, parId) }
+        : c
+    );
+    effacerErreur();
+    dbState = assembler(commandes, s.params);
+    emit();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
+}
+
 async function dbSetParams(params: PavaParams): Promise<boolean> {
   const s = etatDb();
   try {
@@ -543,15 +623,15 @@ async function dbSetDecision(anomalyId: string, decision: Decision): Promise<boo
 }
 
 /** Décisions en masse : un seul appel pour des centaines d'anomalies. */
-async function dbSetDecisionsBulk(refs: string[], statut: string): Promise<boolean> {
+async function dbSetDecisionsBulk(refs: string[], statut: string, commentaire = ''): Promise<boolean> {
   const s = etatDb();
   const idCmd = s.activeCommandeId;
   if (!idCmd || refs.length === 0) return false;
   try {
-    await api(`/commandes/${idCmd}/decisions`, { method: 'POST', body: JSON.stringify({ refs, statut }) });
+    await api(`/commandes/${idCmd}/decisions`, { method: 'POST', body: JSON.stringify({ refs, statut, commentaire }) });
     const cible = s.commandes.find((c) => c.id === idCmd);
     const decisions = { ...(cible?.decisions || {}) };
-    for (const r of refs) decisions[r] = { statut: statut as Decision['statut'], commentaire: decisions[r]?.commentaire || '' };
+    for (const r of refs) decisions[r] = { statut: statut as Decision['statut'], commentaire: commentaire || decisions[r]?.commentaire || '' };
     const commandes = s.commandes.map((c) => (c.id === idCmd ? { ...c, decisions } : c));
     effacerErreur();
     dbState = assembler(commandes, s.params);
@@ -672,8 +752,14 @@ export function setPavaMois(mois: string) {
   save({ ...load(), mois });
 }
 
-export function addImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[]): Promise<boolean> | boolean {
-  if (DB_MODE) return dbAddImportedFile(fichier, nouvelles);
+/** Références d'import : lignes COM (rapprochement R08) + totaux synthèse (R12). */
+export interface RefsImport {
+  com?: Array<Record<string, unknown>>;
+  synthese?: { quantite: number | null; montant: number | null };
+}
+
+export function addImportedFile(fichier: ImportedFile, nouvelles: PavaLigne[], refs?: RefsImport): Promise<boolean> | boolean {
+  if (DB_MODE) return dbAddImportedFile(fichier, nouvelles, refs);
   const s = load();
   save({
     ...s,
@@ -697,6 +783,15 @@ export function deleteLigne(id: string): Promise<boolean> | boolean {
   return true;
 }
 
+/** Corrige ou supprime plusieurs lignes d'un coup (correction automatique d'un groupe d'anomalies). */
+export function corrigerLignesBulk(items: CorrectionLigne[]): Promise<boolean> | boolean {
+  if (DB_MODE) return dbCorrigerBulk(items);
+  const s = load();
+  const parId = new Map(items.map((i) => [i.id, i]));
+  save({ ...s, lignes: appliquerCorrections(s.lignes, parId) });
+  return true;
+}
+
 export function setParams(params: PavaParams): Promise<boolean> | boolean {
   if (DB_MODE) return dbSetParams(params);
   save({ ...load(), params });
@@ -711,11 +806,11 @@ export function setDecision(anomalyId: string, decision: Decision): Promise<bool
 }
 
 /** Décisions en masse (valider/rejeter tout un filtre d'un coup). */
-export function setDecisionsBulk(refs: string[], statut: string): Promise<boolean> | boolean {
-  if (DB_MODE) return dbSetDecisionsBulk(refs, statut);
+export function setDecisionsBulk(refs: string[], statut: string, commentaire = ''): Promise<boolean> | boolean {
+  if (DB_MODE) return dbSetDecisionsBulk(refs, statut, commentaire);
   const s = load();
   const decisions = { ...s.decisions };
-  for (const r of refs) decisions[r] = { statut: statut as Decision['statut'], commentaire: decisions[r]?.commentaire || '' };
+  for (const r of refs) decisions[r] = { statut: statut as Decision['statut'], commentaire: commentaire || decisions[r]?.commentaire || '' };
   save({ ...s, decisions });
   return true;
 }

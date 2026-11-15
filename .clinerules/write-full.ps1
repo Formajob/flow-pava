@@ -1,0 +1,1 @@
+﻿# Write full context file

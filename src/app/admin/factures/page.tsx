@@ -12,7 +12,7 @@ import Link from 'next/link';
 import CarteChargement from '@/components/pava/CarteChargement';
 
 import { getPavaState, subscribePava, REF, setActiveCommande, deleteCommande, addVersion } from '@/lib/pava-store';
-import { runEngine, depuisDemo } from '@/lib/pava/engine';
+import { runEngine, depuisDemo, historiqueVersRows } from '@/lib/pava/engine';
 
 const MOIS_DEMO = [
   { id: '2026-09', label: 'Septembre 2026' },
@@ -55,7 +55,17 @@ export default function FacturesPage() {
     () => depuisDemo(snap.lignes.filter((l) => l.mois === mois) as unknown as Array<Record<string, unknown>>, mois),
     [snap.lignes, mois]
   );
-  const resultat = useMemo(() => runEngine(lignesNorm, snap.params), [lignesNorm, snap.params]);
+  // Références de rapprochement (COM, synthèse, renouvellements des autres commandes)
+  // chargées avec les lignes — alimentent R03/R08/R12.
+  const refsMoteur = useMemo(
+    () => ({
+      com: depuisDemo(snap.com as unknown as Array<Record<string, unknown>>, snap.mois),
+      synthese: snap.synthese || undefined,
+      historique: historiqueVersRows(snap.renouvellements),
+    }),
+    [snap.com, snap.synthese, snap.renouvellements, snap.mois]
+  );
+  const resultat = useMemo(() => runEngine(lignesNorm, snap.params, refsMoteur), [lignesNorm, snap.params, refsMoteur]);
   const statut = snap.statutFacture[mois] || 'en_cours';
   const validee = statut === 'validee' || statut === 'valide_admin';
 

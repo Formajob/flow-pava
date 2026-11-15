@@ -9,10 +9,18 @@
 import { useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { getPavaState, subscribePava, addImportedFile, createCommande, setActiveCommande, addHistorique, addVersion, type PavaLigne } from '@/lib/pava-store';
-import { detecterFeuille, normaliserLigne } from '@/lib/pava/normalize';
+import { detecterFeuille, normaliserLigne, ligneDepuisRow, type FeuilleDetectee } from '@/lib/pava/normalize';
+import { montantAttendu } from '@/lib/pava/price-plan';
 
 function fmt(n: number) {
   return Number(n || 0).toLocaleString('fr-FR');
+}
+
+interface FeuillePrete {
+  nom: string;
+  detectee: FeuilleDetectee;
+  rows: Record<string, unknown>[];
+  coche: boolean;
 }
 
 export default function ImportationPage() {
@@ -20,6 +28,7 @@ export default function ImportationPage() {
   const [nom, setNom] = useState('');
   const [message, setMessage] = useState('');
   const [chargement, setChargement] = useState(false);
+  const [pending, setPending] = useState<{ nomFichier: string; feuilles: FeuillePrete[] } | null>(null);
 
   const creer = async () => {
     if (!nom.trim()) {
@@ -36,68 +45,85 @@ export default function ImportationPage() {
     }
   };
 
+  /** Étape 1 — analyser le fichier : feuilles détectées, à confirmer. */
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
     setChargement(true);
     setMessage('');
+    setPending(null);
     try {
       const XLSX = await import('xlsx');
       const buf = await f.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array' });
-      const nouvelles: PavaLigne[] = [];
-      const feuilles: string[] = [];
-      let compteur = snap.lignes.length + 1;
-
+      const feuilles: FeuillePrete[] = [];
       for (const nomFeuille of wb.SheetNames) {
         const ws = wb.Sheets[nomFeuille];
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
         if (rows.length === 0) continue;
         const colonnes = Object.keys(rows[0]);
-        const feuille = detecterFeuille(nomFeuille, colonnes);
-        feuilles.push(`${nomFeuille} (${feuille.format}/${feuille.nature})`);
-        for (let i = 0; i < rows.length; i++) {
-          const norm = normaliserLigne(rows[i], feuille, i + 2, snap.mois);
-          if (norm.ligne_total) continue;
-          nouvelles.push({
-            id: `${snap.mois}-IMP-${String(compteur++).padStart(4, '0')}`,
-            mois: snap.mois,
-            compte: norm.no_cli,
-            produit: norm.famille,
-            famille: norm.famille,
-            type: '',
-            desc: norm.code_service,
-            categorie: norm.nature === 'RENO' ? 'RENOUVELLEMENT' : norm.nature === 'SACA' ? 'SACA' : norm.nature === 'NON_FACTUREE' ? 'NON_FACTUREE' : 'AJOUT',
-            source: norm.src_code,
-            puissance: norm.puissance,
-            quantite: norm.qty,
-            montantOrigine: norm.paiement_pav,
-            feuille: norm.feuille,
-            ligneExcel: norm.ligne_excel,
-            brut: rows[i], // ligne source conservée en base pour traçabilité
-          });
-        }
+        const detectee = detecterFeuille(nomFeuille, colonnes);
+        // Feuilles de référence (Price Plan, synthèse, COM, inconnues) : jamais
+        // des lignes facturables → décochées et verrouillées à l'import.
+        const coche = !detectee.ignorer;
+        feuilles.push({ nom: nomFeuille, detectee, rows, coche });
       }
-
-      if (nouvelles.length === 0) {
-        setMessage('Aucune ligne exploitable trouvée. Vérifiez les feuilles et les colonnes.');
+      if (feuilles.length === 0) {
+        setMessage('Aucune feuille exploitable trouvée dans ce fichier.');
       } else {
-        setMessage(`Enregistrement de ${nouvelles.length} lignes dans la base…`);
-        const ok = await addImportedFile(
-          { id: `f-${Date.now()}`, nom: f.name, date: new Date().toLocaleString('fr-FR'), feuilles, nbLignes: nouvelles.length, mois: snap.mois },
-          nouvelles
-        );
-        if (ok) {
-          setMessage(`${nouvelles.length} lignes importées et enregistrées. La commande se génère comme fichier Excel au nom saisi.`);
-        } else {
-          setMessage(snap.erreur || 'Enregistrement impossible — réessayez.');
-        }
+        setPending({ nomFichier: f.name, feuilles });
       }
     } catch {
       setMessage('Impossible de lire ce fichier. Vérifiez le format (.xlsx, .xls, .csv).');
     } finally {
       setChargement(false);
       e.target.value = '';
+    }
+  };
+
+  /** Étape 2 — importer les feuilles cochées après confirmation.
+   * Les feuilles de référence (Price Plan, FAC PAVA/synthèse, COM) sont ignorées :
+   * elles ne sont jamais des lignes facturables (sinon double comptage). */
+  const importer = async () => {
+    if (!pending) return;
+    const nouvelles: PavaLigne[] = [];
+    const feuilles: string[] = [];
+    const ignorees: string[] = [];
+    let compteur = snap.lignes.length + 1;
+
+    for (const f of pending.feuilles) {
+      if (f.detectee.ignorer) {
+        ignorees.push(f.nom);
+        continue;
+      }
+      if (!f.coche) continue;
+      feuilles.push(`${f.nom} (${f.detectee.format}/${f.detectee.nature})`);
+      for (let i = 0; i < f.rows.length; i++) {
+        const norm = normaliserLigne(f.rows[i], f.detectee, i + 2, snap.mois);
+        if (norm.ligne_total) continue;
+        const id = `${snap.mois}-IMP-${String(compteur++).padStart(4, '0')}`;
+        norm.ligne_id = id;
+        // montantCalcule = prix attendu du price plan (sinon le montant facturé) → totaux du tableau de bord
+        const calcule = montantAttendu(norm, snap.params) ?? norm.paiement_pav ?? undefined;
+        nouvelles.push(ligneDepuisRow(norm, id, calcule, f.rows[i]));
+      }
+    }
+    if (nouvelles.length === 0) {
+      setMessage('Aucune ligne exploitable dans les feuilles cochées.');
+      return;
+    }
+    setChargement(true);
+    setMessage(`Enregistrement de ${nouvelles.length} lignes dans la base…`);
+    const ok = await addImportedFile(
+      { id: `f-${Date.now()}`, nom: pending.nomFichier, date: new Date().toLocaleString('fr-FR'), feuilles, nbLignes: nouvelles.length, mois: snap.mois },
+      nouvelles
+    );
+    setChargement(false);
+    setPending(null);
+    if (ok) {
+      setMessage(`${nouvelles.length} lignes importées et enregistrées.${ignorees.length ? ` Feuilles de référence ignorées : ${ignorees.join(', ')}.` : ''} Passez à l’Analyse.`);
+    } else {
+      setMessage(snap.erreur || 'Enregistrement impossible — réessayez.');
     }
   };
 
@@ -205,6 +231,40 @@ export default function ImportationPage() {
             Télécharger la commande (.xlsx)
           </button>
         </div>
+        {pending && (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--g-line, #e4e8f1)' }}>
+            <p style={{ margin: '0 0 10px', fontSize: 12.5, fontWeight: 700 }}>
+              Confirmer l&apos;import de « {pending.nomFichier} » — décochez les feuilles à ignorer :
+            </p>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {pending.feuilles.map((f, i) => (
+                <label key={f.nom} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13, padding: '8px 10px', borderRadius: 10, background: f.coche ? 'rgba(37,99,235,.05)' : 'transparent', border: '1px solid var(--g-line, #e4e8f1)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={f.coche}
+                    disabled={Boolean(f.detectee.ignorer)}
+                    onChange={(e) => {
+                      const feuilles = pending.feuilles.map((x, j) => (j === i ? { ...x, coche: e.target.checked } : x));
+                      setPending({ ...pending, feuilles });
+                    }}
+                  />
+                  <span style={{ flex: 1 }}>
+                    <b>{f.nom}</b> · {f.detectee.ignorer ? 'référence (non importée)' : f.detectee.nature} · {f.rows.length.toLocaleString('fr-FR')} ligne(s)
+                    {f.detectee.avertissement && (
+                      <span style={{ color: 'var(--g-warn, #b45309)' }}> — {f.detectee.avertissement}</span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button type="button" className="g-btn" disabled={chargement} onClick={() => void importer()}>
+                {chargement ? 'Enregistrement…' : `Importer (${pending.feuilles.filter((f) => f.coche && !f.detectee.ignorer).reduce((s2, f) => s2 + f.rows.length, 0).toLocaleString('fr-FR')} lignes)`}
+              </button>
+              <button type="button" className="g-btn g-btn--ghost" disabled={chargement} onClick={() => setPending(null)}>Annuler</button>
+            </div>
+          </div>
+        )}
         {message && <p style={{ marginTop: 12, fontSize: 13 }}><b>{message}</b></p>}
       </section>
 

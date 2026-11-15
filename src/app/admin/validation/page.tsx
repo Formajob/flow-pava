@@ -10,7 +10,8 @@ import Link from 'next/link';
 import CarteChargement from '@/components/pava/CarteChargement';
 
 import { getPavaState, subscribePava, setStatutFacture } from '@/lib/pava-store';
-import { runEngine, depuisDemo } from '@/lib/pava/engine';
+import { runEngine, depuisDemo, historiqueVersRows } from '@/lib/pava/engine';
+import { aTraiter } from '@/lib/pava/groupes';
 
 export default function ValidationPage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
@@ -20,12 +21,19 @@ export default function ValidationPage() {
     () => depuisDemo(snap.lignes as unknown as Array<Record<string, unknown>>, snap.mois),
     [snap.lignes, snap.mois]
   );
-  const resultat = useMemo(() => runEngine(lignesNorm, snap.params), [lignesNorm, snap.params]);
+  // Références de rapprochement (COM, synthèse, renouvellements des autres commandes)
+  // chargées avec les lignes — alimentent R03/R08/R12.
+  const refsMoteur = useMemo(
+    () => ({
+      com: depuisDemo(snap.com as unknown as Array<Record<string, unknown>>, snap.mois),
+      synthese: snap.synthese || undefined,
+      historique: historiqueVersRows(snap.renouvellements),
+    }),
+    [snap.com, snap.synthese, snap.renouvellements, snap.mois]
+  );
+  const resultat = useMemo(() => runEngine(lignesNorm, snap.params, refsMoteur), [lignesNorm, snap.params, refsMoteur]);
 
-  const restantes = resultat.anomalies.filter((a) => {
-    const d = snap.decisions[a.id];
-    return !d || d.statut === 'ouvert';
-  });
+  const restantes = aTraiter(resultat.anomalies, snap.decisions);
 
   const validerAdmin = () => setStatutFacture(snap.mois, 'valide_admin');
   const validerDirecteur = () => setStatutFacture(snap.mois, 'validee');
