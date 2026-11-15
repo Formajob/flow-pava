@@ -53,7 +53,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'Corps de requête invalide.' }, { status: 400 });
   }
 
-  const refs = (body.refs || []).map((r) => r.trim()).filter(Boolean);
+  // Déduplication : une même ligne peut être flaggée deux fois dans un groupe
+  // (ex. R07 — ligne présente dans deux paires « même service ») ; un upsert
+  // Postgres avec doublons échoue (« cannot affect row a second time »).
+  const refs = [...new Set((body.refs || []).map((r) => r.trim()).filter(Boolean))];
   const statut = body.statut || 'ouvert';
   if (refs.length === 0) return NextResponse.json({ error: 'Aucune référence fournie.' }, { status: 400 });
 

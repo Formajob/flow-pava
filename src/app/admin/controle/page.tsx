@@ -117,6 +117,11 @@ export default function ControlePage() {
         </div>
       </header>
 
+      {snap.erreur && (
+        <div className="g-card g-glass" style={{ borderColor: 'var(--g-bad, #dc2626)' }}>
+          <p style={{ fontSize: 13 }}><b>Erreur base de données :</b> {snap.erreur}</p>
+        </div>
+      )}
       {snap.enChargement && <CarteChargement titre="Chargement du contrôle…" texte="Les lignes de la commande sont récupérées puis passées dans les règles R01–R13." />}
 
       <section className="g-kpis">

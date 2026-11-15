@@ -6,7 +6,7 @@
  * Règle d'or : on ne rend jamais plus de 25 lignes à la fois.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Anomaly, PavaRow } from '@/lib/pava/types';
 import { libelleFix, estTraitee, type DecisionLite, type Groupe } from '@/lib/pava/groupes';
 
@@ -34,6 +34,8 @@ export default function GroupeAnomalies({ groupe, items, mode, decisions, rows, 
   const [q, setQ] = useState('');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [commentaire, setCommentaire] = useState('');
+  const [erreurComment, setErreurComment] = useState(false);
+  const refComment = useRef<HTMLInputElement>(null);
 
   const filtrees = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -53,7 +55,10 @@ export default function GroupeAnomalies({ groupe, items, mode, decisions, rows, 
 
   const ignorer = () => {
     if (!commentaire.trim()) {
-      alert('Laissez un commentaire (raison) avant d’ignorer.');
+      // Retour visible (et focus) au lieu d'une alerte facile à manquer :
+      // le commentaire est la trace d'audit de la décision d'ignorance.
+      setErreurComment(true);
+      refComment.current?.focus();
       return;
     }
     if (!confirm(`Ignorer ${portee} anomalie(s) « ${groupe.raison} » ?`)) return;
@@ -112,7 +117,19 @@ export default function GroupeAnomalies({ groupe, items, mode, decisions, rows, 
 
       {mode === 'traiter' && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input className="g-input" style={{ maxWidth: 280 }} placeholder="Commentaire (obligatoire pour ignorer)" value={commentaire} onChange={(e) => setCommentaire(e.target.value)} />
+          <input
+            ref={refComment}
+            className="g-input"
+            style={{ maxWidth: 280, ...(erreurComment ? { borderColor: 'var(--g-bad, #dc2626)', boxShadow: '0 0 0 3px rgba(220,38,38,.12)' } : {}) }}
+            placeholder="Raison de l’ignorance (obligatoire)"
+            value={commentaire}
+            onChange={(e) => { setCommentaire(e.target.value); setErreurComment(false); }}
+          />
+          {erreurComment && (
+            <span style={{ fontSize: 12.5, color: 'var(--g-bad, #dc2626)', fontWeight: 700 }}>
+              Écrivez d’abord la raison dans le champ à gauche, puis cliquez « Ignorer ».
+            </span>
+          )}
           <button type="button" className="g-btn g-btn--ghost g-btn--sm" disabled={occupe} onClick={ignorer}>Ignorer {choisies.length ? `(${choisies.length})` : 'tout'}</button>
           <button type="button" className="g-btn g-btn--ghost g-btn--sm" disabled={occupe} onClick={valider}>Valider {choisies.length ? `(${choisies.length})` : 'tout'}</button>
           {cibleFixable.length > 0 && (
