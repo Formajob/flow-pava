@@ -22,15 +22,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   const lignes = await assemblerLignes(id);
-  const { data: refs } = await supabase
-    .from('pava_fichiers')
-    .select('com, synthese')
-    .eq('commande_id', id);
-  const com: PavaLigne[] = [];
-  let synthese: { quantite: number | null; montant: number | null } | null = null;
-  for (const f of refs || []) {
-    for (const c of (f.com as PavaLigne[] | null) || []) com.push(sansBrut([c])[0]);
-    if (!synthese && f.synthese) synthese = f.synthese as { quantite: number | null; montant: number | null };
-  }
-  return NextResponse.json({ lignes: sansBrut(lignes), com, synthese });
+  // Références de rapprochement (COM R08, synthèse R12) : pas encore branchées —
+  // on renvoie une forme vide SÉMANTIQUEMENT STABLE pour le store, sans dépendre
+  // de colonnes optionnelles de la base (migration 004 non requise).
+  return NextResponse.json({ lignes: sansBrut(lignes), com: [] as PavaLigne[], synthese: null });
 }

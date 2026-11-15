@@ -24,6 +24,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let body: {
     fichier?: Partial<ImportedFile>;
     lignes?: PavaLigne[];
+    // com/synthese (rapprochement R08/R12) : acceptés mais ignorés pour
+    // l'instant — ces colonnes ne sont pas requises (voir migration 004, optionnelle).
     com?: Array<Record<string, unknown>>;
     synthese?: { quantite: number | null; montant: number | null } | null;
   };
@@ -47,8 +49,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       nb_lignes: lignes.length,
       mois: fichier.mois || null,
       contenu: [],
-      com: body.com || [],
-      synthese: body.synthese ?? null,
     })
     .select()
     .single();

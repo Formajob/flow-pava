@@ -227,10 +227,19 @@ export default function ImportationPage() {
             {chargement ? 'Lecture en cours…' : 'Choisir un fichier Excel ou CSV'}
             <input type="file" accept=".xlsx,.xls,.csv" onChange={onFile} style={{ display: 'none' }} disabled={chargement} />
           </label>
-          <button type="button" className="g-btn g-btn--ghost" onClick={telechargerCommande} disabled={snap.lignes.length === 0}>
+          <button
+            type="button"
+            className="g-btn g-btn--ghost"
+            onClick={telechargerCommande}
+            disabled={snap.lignes.length === 0}
+            title={snap.lignes.length === 0 ? 'Aucune ligne importée pour le moment — importez d’abord un fichier, le bouton s’activera.' : 'Télécharger les lignes importées'}
+          >
             Télécharger la commande (.xlsx)
           </button>
         </div>
+        <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--g-muted, #64748b)' }}>
+          « Télécharger la commande » s&apos;active dès qu&apos;au moins une ligne a été importée dans la commande active.
+        </p>
         {pending && (
           <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--g-line, #e4e8f1)' }}>
             <p style={{ margin: '0 0 10px', fontSize: 12.5, fontWeight: 700 }}>

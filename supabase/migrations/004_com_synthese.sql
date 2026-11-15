@@ -1,14 +1,13 @@
 -- ============================================================
--- FLOW VL PAVA — 004 : références de rapprochement
+-- FLOW VL PAVA — 004 : références de rapprochement (OPTIONNELLE)
 -- ============================================================
--- Active les contrôles qui étaient muets faute de données :
---   • com       : lignes du fichier COM importé comme RÉFÉRENCE
---                 (règle R08 : source 45 absente du COM, doublons COM)
+-- ⚠️ NON REQUISE par le code actuel : les routes n'écrivent ni ne
+-- lisent ces colonnes. À exécuter UNIQUEMENT quand le re-branchement
+-- des règles R08 (fichier COM) et R12 (synthèse du sommaire) sera
+-- fait — elles stockeront alors :
+--   • com       : lignes du fichier COM importées comme RÉFÉRENCE
 --   • synthese  : totaux lus sur la feuille sommaire du fichier
---                 (règle R12 : recalculé vs synthèse du fichier)
--- Les feuilles COM / synthèse ne sont JAMAIS importées comme lignes
--- facturables — uniquement comme référence de contrôle.
--- À exécuter dans Supabase → SQL Editor (base « flow »).
+-- Idempotente (IF NOT EXISTS) : sans danger si exécutée plus tôt.
 -- ============================================================
 
 ALTER TABLE pava_fichiers ADD COLUMN IF NOT EXISTS com JSONB NOT NULL DEFAULT '[]'::jsonb;
