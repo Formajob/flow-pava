@@ -26,6 +26,9 @@ interface FeuillePrete {
 export default function ImportationPage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
   const [nom, setNom] = useState('');
+  // Mois de la facture créée : essentiel pour importer les mois précédents
+  // (chaque commande porte son mois → suivi de l'évolution mensuelle).
+  const [moisChoisi, setMoisChoisi] = useState(snap.mois || new Date().toISOString().slice(0, 7));
   const [message, setMessage] = useState('');
   const [chargement, setChargement] = useState(false);
   const [pending, setPending] = useState<{ nomFichier: string; feuilles: FeuillePrete[] } | null>(null);
@@ -36,9 +39,9 @@ export default function ImportationPage() {
       return;
     }
     setMessage('Création de la commande…');
-    const ok = await createCommande(nom, snap.mois);
+    const ok = await createCommande(nom, moisChoisi);
     if (ok) {
-      setMessage(`Commande « ${nom.trim()} » créée. Importez maintenant les fichiers.`);
+      setMessage(`Commande « ${nom.trim()} » créée pour ${moisChoisi}. Importez maintenant les fichiers Excel/CSV du mois.`);
       setNom('');
     } else {
       setMessage(snap.erreur || 'Création impossible.');
@@ -201,12 +204,26 @@ export default function ImportationPage() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
-          <label style={{ flex: '1 1 320px', fontSize: 12, fontWeight: 700 }}>
+          <label style={{ flex: '1 1 260px', fontSize: 12, fontWeight: 700 }}>
             Nom de la commande *
             <input className="g-input" placeholder="Ex : Facture Novembre, facture_test, Vérification Août 2026" value={nom} onChange={(e) => setNom(e.target.value)} style={{ marginTop: 6 }} />
           </label>
+          <label style={{ fontSize: 12, fontWeight: 700 }}>
+            Mois de la facture *
+            <input
+              className="g-input"
+              type="month"
+              value={moisChoisi}
+              onChange={(e) => setMoisChoisi(e.target.value)}
+              style={{ marginTop: 6 }}
+            />
+          </label>
           <button type="button" className="g-btn" onClick={creer}>Créer la commande</button>
         </div>
+        <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--g-muted, #64748b)' }}>
+          Pour importer les mois précédents : indiquez le mois (ex. 2026-09), créez la commande, puis importez son fichier —
+          le tableau de bord suivra l&apos;évolution mensuelle des montants par famille.
+        </p>
         <div style={{ marginTop: 12, fontSize: 13 }}>
           Commande active :{' '}
           {snap.activeCommandeId ? (

@@ -18,6 +18,10 @@ export interface StatsCommande {
   totalCalcule: number;
   nbIncoherences: number;
   parCategorie: Record<string, StatsCategorie>;
+  /** Répartition par FAMILLE de produit (CAB, TPC, CELL, TIPN, NUM, REDO,
+   *  WIFIPRO…) — alimente le suivi mensuel par famille du tableau de bord.
+   *  Absent des commandes importées avant son ajout (re-importer pour la retrouver). */
+  parFamille?: Record<string, StatsCategorie>;
 }
 
 export const STATS_VIDES: StatsCommande = {
@@ -26,11 +30,12 @@ export const STATS_VIDES: StatsCommande = {
   totalCalcule: 0,
   nbIncoherences: 0,
   parCategorie: {},
+  parFamille: {},
 };
 
 /** Fusionne les stats de plusieurs commandes (vue globale du tableau de bord). */
 export function fusionnerStats(liste: StatsCommande[]): StatsCommande {
-  const out: StatsCommande = { nbLignes: 0, totalFacture: 0, totalCalcule: 0, nbIncoherences: 0, parCategorie: {} };
+  const out: StatsCommande = { nbLignes: 0, totalFacture: 0, totalCalcule: 0, nbIncoherences: 0, parCategorie: {}, parFamille: {} };
   for (const s of liste) {
     out.nbLignes += s.nbLignes || 0;
     out.totalFacture += s.totalFacture || 0;
@@ -42,6 +47,12 @@ export function fusionnerStats(liste: StatsCommande[]): StatsCommande {
       cur.m += v.m || 0;
       out.parCategorie[cat] = cur;
     }
+    for (const [fam, v] of Object.entries(s.parFamille || {})) {
+      const cur = out.parFamille![fam] || { n: 0, m: 0 };
+      cur.n += v.n || 0;
+      cur.m += v.m || 0;
+      out.parFamille![fam] = cur;
+    }
   }
   return out;
 }
@@ -49,6 +60,7 @@ export function fusionnerStats(liste: StatsCommande[]): StatsCommande {
 /** Calcule les stats d'une commande à partir de ses lignes (serveur). */
 export function calculerStats(lignes: PavaLigne[]): StatsCommande {
   const parCategorie: Record<string, StatsCategorie> = {};
+  const parFamille: Record<string, StatsCategorie> = {};
   let totalFacture = 0;
   let totalCalcule = 0;
   let nbIncoherences = 0;
@@ -59,9 +71,14 @@ export function calculerStats(lignes: PavaLigne[]): StatsCommande {
     cur.n += l.quantite ?? 1;
     cur.m += montant;
     parCategorie[cat] = cur;
+    const fam = l.famille || l.produit || 'AUTRE';
+    const curF = parFamille[fam] || { n: 0, m: 0 };
+    curF.n += l.quantite ?? 1;
+    curF.m += montant;
+    parFamille[fam] = curF;
     totalFacture += l.montantOrigine ?? 0;
     totalCalcule += montant;
     if (l.incomplet || l.incoherence) nbIncoherences++;
   }
-  return { nbLignes: lignes.length, totalFacture, totalCalcule, nbIncoherences, parCategorie };
+  return { nbLignes: lignes.length, totalFacture, totalCalcule, nbIncoherences, parCategorie, parFamille };
 }

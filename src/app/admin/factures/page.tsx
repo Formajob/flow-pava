@@ -163,7 +163,15 @@ export default function FacturesPage() {
     const autoTable = (await import('jspdf-autotable')).default;
     const doc = new jsPDF();
 
-    // En-tête pro : bandeau navy + logo Flow + titre
+    const moisLabel = MOIS.find((m) => m.id === mois)?.label || mois;
+    const noFacture = `PAVA-${mois}`;
+    const statutLabel = statut === 'validee' ? 'VALIDÉE' : statut === 'valide_admin' ? 'VALIDÉE ADMIN' : 'EN COURS';
+    const statutCoul: [number, number, number] = statut === 'validee' ? [22, 163, 74] : statut === 'valide_admin' ? [8, 145, 178] : [217, 119, 6];
+    const qteTotale = parFamille.reduce((s2, [, v]) => s2 + v.qte, 0);
+    const totalFamilles = parFamille.reduce((s2, [, v]) => s2 + v.montant, 0);
+    const ecart = resultat.totalRecalcule - resultat.totalFacture;
+
+    // ════════ PAGE 1 — EN-TÊTE FACTURE ════════
     doc.setFillColor(11, 19, 48);
     doc.rect(0, 0, 210, 28, 'F');
     doc.setFillColor(38, 212, 234);
@@ -181,71 +189,183 @@ export default function FacturesPage() {
     doc.setFontSize(8);
     doc.setTextColor(195, 206, 228);
     doc.text('By ACX Maroc', 14, 20);
-    doc.setFontSize(16);
+    doc.setFontSize(19);
     doc.setTextColor(11, 19, 48);
-    doc.text(`Facture PAVA — ${MOIS.find((m) => m.id === mois)?.label}`, 14, 38);
-    doc.setFontSize(10);
+    doc.text(`Facture PAVA — ${moisLabel}`, 14, 40);
+    doc.setFontSize(10.5);
     doc.setTextColor(84, 101, 138);
-    doc.text(`Videotron PAV Affaire · Total : ${fmt(resultat.totalRecalcule)} $ · ${resultat.lignes.length} lignes · Statut : ${statut === 'validee' ? 'Validée' : statut === 'valide_admin' ? 'Validée Admin' : 'En cours'}`, 14, 45);
-    doc.text(`Générée le ${new Date().toLocaleDateString('fr-FR')} · ACX Flow · Espace VL PAVA`, 14, 51);
+    doc.text(snap.nomCommande || 'Commande de facturation', 14, 46.5);
 
-    // Sommaire en premier (comme FAC PAVA) : par famille puis par nature
-    doc.setFontSize(12);
+    // Bloc méta à droite : n° facture, date, statut (pastille)
+    doc.setDrawColor(219, 227, 243);
+    doc.setFillColor(246, 248, 253);
+    doc.roundedRect(134, 33, 62, 22, 2.2, 2.2, 'FD');
+    doc.setFontSize(8);
+    doc.setTextColor(132, 148, 184);
+    doc.text('N° DE FACTURE', 139, 38.5);
+    doc.text('DATE D\u2019ÉMISSION', 139, 45);
+    doc.setFontSize(10.5);
     doc.setTextColor(11, 19, 48);
-    doc.text('Sommaire — par famille', 14, 60);
-    autoTable(doc, {
-      startY: 63,
-      head: [['Famille', 'Quantité', 'Montant ($)']],
-      body: [
-        ...parFamille.map(([f, v]) => [f, String(v.qte), fmt(v.montant)]),
-        ['Total général', String(parFamille.reduce((s, [, v]) => s + v.qte, 0)), fmt(parFamille.reduce((s, [, v]) => s + v.montant, 0))],
-      ],
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
-      alternateRowStyles: { fillColor: [238, 242, 251] },
+    doc.text(noFacture, 139, 42.3);
+    doc.text(new Date().toLocaleDateString('fr-FR'), 139, 48.8);
+    doc.setFillColor(statutCoul[0], statutCoul[1], statutCoul[2]);
+    doc.roundedRect(170.5, 35.6, 22, 6.4, 3.2, 3.2, 'F');
+    doc.setFontSize(7.4);
+    doc.setTextColor(255, 255, 255);
+    doc.text(statutLabel, 181.5, 39.9, { align: 'center' });
+
+    // Émetteur / destinataire
+    doc.setFontSize(8);
+    doc.setTextColor(132, 148, 184);
+    doc.text('ÉMETTEUR', 14, 57);
+    doc.text('DESTINATAIRE', 110, 57);
+    doc.setFontSize(9.5);
+    doc.setTextColor(35, 45, 75);
+    doc.text(doc.splitTextToSize('ACX Maroc — préparé via ACX Flow · Espace VL PAVA', 85), 14, 61.5);
+    doc.text(doc.splitTextToSize('Videotron PAV Affaire — renouvellements et branchements', 85), 110, 61.5);
+
+    // Rangée de KPI
+    const kpis: Array<[string, string, string]> = [
+      ['TOTAL RECALCULÉ', `${fmt(resultat.totalRecalcule)} $`, `${resultat.lignes.length} lignes`],
+      ['TOTAL FACTURÉ (SOURCE)', `${fmt(resultat.totalFacture)} $`, 'montant du fichier importé'],
+      ['ÉCART', `${ecart >= 0 ? '+' : ''}${fmt(ecart)} $`, Math.abs(ecart) < 0.5 ? 'conforme' : 'après corrections'],
+      ['QUANTITÉS', fmt(qteTotale), `${parFamille.length} familles de produits`],
+    ];
+    kpis.forEach((k, i) => {
+      const x = 14 + i * 45.75;
+      doc.setDrawColor(219, 227, 243);
+      doc.setFillColor(249, 250, 254);
+      doc.roundedRect(x, 70, 43.5, 19, 2.2, 2.2, 'FD');
+      doc.setFontSize(7);
+      doc.setTextColor(132, 148, 184);
+      doc.text(k[0], x + 3, 75.5);
+      doc.setFontSize(11.5);
+      doc.setTextColor(11, 19, 48);
+      doc.text(k[1], x + 3, 81.5);
+      doc.setFontSize(7);
+      doc.setTextColor(132, 148, 184);
+      doc.text(doc.splitTextToSize(k[2], 38), x + 3, 86);
     });
 
-    const y1 = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 90;
-    doc.setFontSize(12);
-    doc.text('Sommaire — par nature', 14, y1 + 10);
-    autoTable(doc, {
-      startY: y1 + 13,
-      head: [['Catégorie', 'Quantité', 'Prix ($)']],
-      body: [
-        ...parNature.map(([n, v]) => [n, String(v.qte), fmt(v.montant)]),
-        ['TOTAL', String(parNature.reduce((s, [, v]) => s + v.qte, 0)), fmt(parNature.reduce((s, [, v]) => s + v.montant, 0))],
-      ],
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
-      alternateRowStyles: { fillColor: [238, 242, 251] },
-    });
-
-    // Graphes thème plateforme (navy / cyan / violet)
-    const y2 = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 130;
-    if (y2 > 240) doc.addPage();
-    const gy = y2 > 240 ? 20 : y2 + 12;
+    // Sommaire par famille (avec % du total)
     doc.setFontSize(12);
     doc.setTextColor(11, 19, 48);
-    doc.text('Montants par famille', 14, gy);
+    doc.text('Sommaire — par famille de produits', 14, 98);
+    autoTable(doc, {
+      startY: 101,
+      head: [['Famille', 'Quantité', 'Montant ($)', '% du total']],
+      body: parFamille.map(([f, v]) => [
+        f,
+        String(v.qte),
+        fmt(v.montant),
+        `${totalFamilles ? ((v.montant / totalFamilles) * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : 0} %`,
+      ]),
+      foot: [['Total général', String(qteTotale), fmt(totalFamilles), '100 %']],
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
+      footStyles: { fillColor: [238, 242, 251], textColor: [11, 19, 48], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [246, 248, 253] },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    });
+
+    const y1 = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 130;
+    // Sommaire par nature (si la place reste, sinon page suivante)
+    let yNature = y1 + 12;
+    if (yNature > 235) { doc.addPage(); yNature = 20; }
+    doc.setFontSize(12);
+    doc.setTextColor(11, 19, 48);
+    doc.text('Sommaire — par nature', 14, yNature);
+    const totalNature = parNature.reduce((s2, [, v]) => s2 + v.montant, 0);
+    autoTable(doc, {
+      startY: yNature + 3,
+      head: [['Nature', 'Quantité', 'Montant ($)', '% du total']],
+      body: parNature.map(([n, v]) => [
+        n,
+        String(v.qte),
+        fmt(v.montant),
+        `${totalNature ? ((v.montant / totalNature) * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : 0} %`,
+      ]),
+      foot: [['TOTAL', String(parNature.reduce((s2, [, v]) => s2 + v.qte, 0)), fmt(totalNature), '100 %']],
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
+      footStyles: { fillColor: [238, 242, 251], textColor: [11, 19, 48], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [246, 248, 253] },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    });
+
+    // ════════ PAGE 2 — ANALYSES ════════
+    doc.addPage();
+    doc.setFontSize(12);
+    doc.setTextColor(11, 19, 48);
+    doc.text('Montants par famille', 14, 18);
     const max = Math.max(1, ...parFamille.map(([, v]) => v.montant));
     const rgb: Record<string, [number, number, number]> = {
       CAB: [37, 99, 235], CELL: [8, 145, 178], NUM: [124, 58, 237], REDO: [14, 165, 233],
       TIPN: [6, 182, 212], TPC: [139, 92, 246], WIFIPRO: [34, 211, 238],
     };
     parFamille.forEach(([f, v], i) => {
-      const y = gy + 8 + i * 9;
-      doc.setFontSize(8);
+      const y = 26 + i * 10;
+      doc.setFontSize(8.5);
       doc.setTextColor(84, 101, 138);
-      doc.text(f, 14, y + 3);
-      const w = (v.montant / max) * 110;
+      doc.text(f, 14, y + 4);
+      const w = (v.montant / max) * 105;
       const c = rgb[f] || [37, 99, 235];
+      doc.setFillColor(219, 227, 243);
+      doc.rect(34, y, 105, 5.5, 'F');
       doc.setFillColor(c[0], c[1], c[2]);
-      doc.rect(32, y, w, 5, 'F');
+      doc.rect(34, y, w, 5.5, 'F');
       doc.setTextColor(11, 19, 48);
-      doc.text(`${fmt(v.montant)} $`, 34 + w, y + 3);
+      doc.text(`${fmt(v.montant)} $ (${totalFamilles ? ((v.montant / totalFamilles) * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : 0} %)`, 34 + w + 3, y + 4);
     });
 
-    // Détails utiles pour la facturation (résumé par code service, pas toutes les lignes)
+    // Évolution mensuelle (dès que 2 mois de factures sont importés)
+    const parMoisPdf = (() => {
+      const m = new Map<string, number>();
+      for (const c of snap.commandes) {
+        if (!c.mois) continue;
+        m.set(c.mois, (m.get(c.mois) || 0) + (c.stats?.totalCalcule || 0));
+      }
+      return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    })();
+    const yEvol = 26 + parFamille.length * 10 + 12;
+    doc.setFontSize(12);
+    doc.setTextColor(11, 19, 48);
+    doc.text('Évolution des montants facturés', 14, yEvol);
+    if (parMoisPdf.length >= 2) {
+      const lignesEvol = parMoisPdf.map(([id, montant], i) => {
+        const prec = i > 0 ? parMoisPdf[i - 1][1] : null;
+        const delta = prec !== null ? montant - prec : null;
+        const pct = prec ? ((montant - prec) / prec) * 100 : null;
+        return [
+          libelleMois(id),
+          `${fmt(montant)} $`,
+          delta === null ? '—' : `${delta >= 0 ? '+' : ''}${fmt(delta)} $`,
+          pct === null ? '—' : `${pct >= 0 ? '+' : ''}${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %`,
+        ];
+      });
+      autoTable(doc, {
+        startY: yEvol + 3,
+        head: [['Mois', 'Montant facturé', 'Δ vs mois précédent', 'Variation']],
+        body: lignesEvol,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
+        alternateRowStyles: { fillColor: [246, 248, 253] },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      });
+    } else {
+      doc.setFontSize(9);
+      doc.setTextColor(132, 148, 184);
+      doc.text(
+        doc.splitTextToSize(
+          'Un seul mois de facture est importé pour l\u2019instant. Importez les factures des mois précédents (une commande par mois) et l\u2019évolution des montants facturés s\u2019affichera ici, avec le détail par famille.',
+          178
+        ),
+        14,
+        yEvol + 7
+      );
+    }
+
+    // ════════ PAGE 3 — DÉTAILS ════════
     doc.addPage();
     doc.setFontSize(12);
     doc.setTextColor(11, 19, 48);
@@ -267,10 +387,47 @@ export default function FacturesPage() {
       body: [...parCode.entries()].sort((a, b) => b[1].montant - a[1].montant).map(([c, v]) => [c, String(v.qte), fmt(v.montant)]),
       styles: { fontSize: 8 },
       headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
-      alternateRowStyles: { fillColor: [238, 242, 251] },
+      alternateRowStyles: { fillColor: [246, 248, 253] },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
     });
 
-    const nomPdf = (snap.nomCommande || `facture-pava-${mois}`).replace(/[\\/:*?"<>|]/g, '_');
+    const yTop = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 100;
+    let yComptes = yTop + 14;
+    if (yComptes > 220) { doc.addPage(); yComptes = 20; }
+    doc.setFontSize(12);
+    doc.setTextColor(11, 19, 48);
+    doc.text('Top 10 comptes clients', 14, yComptes - 6);
+    const parCompte = new Map<string, { qte: number; montant: number }>();
+    for (const l of resultat.lignes) {
+      const cle = l.no_cli || '—';
+      const e = parCompte.get(cle) || { qte: 0, montant: 0 };
+      e.qte += l.qty || 1;
+      e.montant += l.montant_attendu ?? l.paiement_pav ?? 0;
+      parCompte.set(cle, e);
+    }
+    autoTable(doc, {
+      startY: yComptes,
+      head: [['Compte client', 'Quantité', 'Montant ($)']],
+      body: [...parCompte.entries()].sort((a, b) => b[1].montant - a[1].montant).slice(0, 10).map(([c, v]) => [c, String(v.qte), fmt(v.montant)]),
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [246, 248, 253] },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+    });
+
+    // ════════ Pieds de page paginés ════════
+    const nbPages = doc.getNumberOfPages();
+    for (let i = 1; i <= nbPages; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(219, 227, 243);
+      doc.line(14, 285, 196, 285);
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 160, 188);
+      doc.text(`ACX Flow · Espace VL PAVA · Facture ${moisLabel} (${noFacture}) · Générée le ${new Date().toLocaleDateString('fr-FR')}`, 14, 289.5);
+      doc.text(`Page ${i} / ${nbPages}`, 196, 289.5, { align: 'right' });
+    }
+
+    const nomPdf = (snap.nomCommande || `facture-pava-${mois}`).replace(/[\\/:*?\"<>|]/g, '_');
     doc.save(`${nomPdf}.pdf`);
   };
 

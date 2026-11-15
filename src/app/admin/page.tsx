@@ -17,6 +17,27 @@ function fmt(n: number) {
   return Number(n || 0).toLocaleString('fr-FR');
 }
 
+/** '2026-11' → 'nov. 2026' */
+function libelleMois(id: string) {
+  const [a, m] = id.split('-');
+  const noms = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  return `${noms[Number(m) - 1] || m} ${a}`;
+}
+
+/** Montant compact pour les graphiques : 257,4 k$ / 1,2 M$ */
+function fmtCourt(n: number) {
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace('.', ',')} M$`;
+  if (Math.abs(n) >= 10_000) return `${Math.round(n / 1000)} k$`;
+  if (Math.abs(n) >= 1_000) return `${(n / 1000).toFixed(1).replace('.', ',')} k$`;
+  return `${fmt(n)} $`;
+}
+
+/** Couleurs stables par famille (mêmes teintes que le PDF). */
+const COULEURS: Record<string, string> = {
+  CAB: '#2563eb', TPC: '#8b5cf6', CELL: '#0891b2', TIPN: '#06b6d4',
+  NUM: '#7c3aed', REDO: '#0ea5e9', WIFIPRO: '#22d3ee', AUTRE: '#94a3b8',
+};
+
 type Totaux = {
   AJOUT: { n: number; m: number };
   RENOUVELLEMENT: { n: number; m: number };
@@ -88,6 +109,54 @@ export default function AdminDashboardPage() {
   const maxCat = Math.max(1, totaux.AJOUT.m, totaux.RENOUVELLEMENT.m);
   const maxCmd = Math.max(1, ...parCommande.map((c) => c.montant));
   const nbEnCours = snap.commandes.filter((c) => c.statut !== 'validee').length;
+
+  // Familles de produits : depuis les stats pré-calculées (parFamille) ;
+  // repli sur calcul direct des lignes pour la commande active quand les
+  // stats datent d'avant l'ajout de parFamille (commandes à réimporter).
+  const familles = useMemo(() => {
+    const entries = Object.entries(stats.parFamille || {}).filter(([, v]) => v.n > 0 || v.m > 0);
+    if (entries.length > 0) return entries.sort((a, b) => b[1].m - a[1].m);
+    if (commandeActive && commandeActive.id === snap.activeCommandeId) {
+      const m = new Map<string, { n: number; m: number }>();
+      for (const l of snap.lignes) {
+        const fam = l.famille || l.produit || 'AUTRE';
+        const e = m.get(fam) || { n: 0, m: 0 };
+        e.n += l.quantite ?? 1;
+        e.m += (l.montantCalcule ?? 0) + (l.ajustement || 0);
+        m.set(fam, e);
+      }
+      return [...m.entries()].sort((a, b) => b[1].m - a[1].m);
+    }
+    return [] as [string, { n: number; m: number }][];
+  }, [stats, commandeActive, snap.activeCommandeId, snap.lignes]);
+  const totalFamilles = familles.reduce((s2, [, v]) => s2 + v.m, 0);
+  const maxFamille = Math.max(1, ...familles.map(([, v]) => v.m));
+
+  // Suivi mensuel : une ligne par MOIS (les commandes d'un même mois sont cumulées).
+  // Se remplit au fil des imports des factures des mois précédents.
+  const parMois = useMemo(() => {
+    const m = new Map<string, { mois: string; cmd: number; lignes: number; montant: number; inco: number; familles: Record<string, { n: number; m: number }>; complet: boolean }>();
+    for (const c of snap.commandes) {
+      if (!c.mois) continue;
+      const e = m.get(c.mois) || { mois: c.mois, cmd: 0, lignes: 0, montant: 0, inco: 0, familles: {}, complet: true };
+      const st = c.stats || STATS_VIDES;
+      e.cmd += 1;
+      e.lignes += st.nbLignes || 0;
+      e.montant += st.totalCalcule || 0;
+      e.inco += st.nbIncoherences || 0;
+      if (!st.parFamille || Object.keys(st.parFamille).length === 0) e.complet = false;
+      for (const [f, v] of Object.entries(st.parFamille || {})) {
+        const cur = e.familles[f] || { n: 0, m: 0 };
+        cur.n += v.n || 0;
+        cur.m += v.m || 0;
+        e.familles[f] = cur;
+      }
+      m.set(c.mois, e);
+    }
+    return [...m.values()].sort((a, b) => a.mois.localeCompare(b.mois));
+  }, [snap.commandes]);
+  const maxMois = Math.max(1, ...parMois.map((m) => m.montant));
+  const derniersMois = parMois.slice(-12); // le graphique montre les 12 derniers mois
 
   if (!mounted) {
     return (
@@ -299,6 +368,222 @@ export default function AdminDashboardPage() {
           </div>
         </article>
       </section>
+
+      <section className="g-grid-2">
+        {/* ── Familles de produits ── */}
+        <article className="g-card g-glass g-rise" style={{ ['--d' as string]: '.26s' }}>
+          <div className="g-card-head">
+            <div>
+              <h3 className="g-card-title">Familles de produits</h3>
+              <p className="g-card-sub">
+                Montant facturé par famille — {filtre === 'toutes' ? 'toutes commandes confondues' : `commande affichée`}.
+              </p>
+            </div>
+          </div>
+          {familles.length === 0 ? (
+            <p className="g-empty">
+              Aucune répartition par famille pour cette sélection. Les commandes importées avant cette mise à jour
+              doivent être réimportées pour l&apos;obtenir.
+            </p>
+          ) : (
+            <div className="g-bars">
+              {familles.map(([f, v]) => {
+                const pct = totalFamilles ? (v.m / totalFamilles) * 100 : 0;
+                return (
+                  <div key={f} className="g-bar">
+                    <span className="g-bar-label">
+                      <i style={{ background: COULEURS[f] || '#3b82f6', color: COULEURS[f] || '#3b82f6' }} />
+                      {f}
+                    </span>
+                    <span className="g-track">
+                      <span className="g-fill" style={{ width: `${Math.round((v.m / maxFamille) * 100)}%`, ['--g-bar-c' as string]: COULEURS[f] || '#3b82f6' }} />
+                    </span>
+                    <span className="g-bar-val">
+                      <b className="g-num">{montant(v.m)}</b>
+                      <small style={{ display: 'block', fontSize: 11, opacity: 0.75 }}>
+                        {v.n.toLocaleString('fr-FR')} u · {pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %
+                      </small>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="g-card-foot">
+            <span>{familles.length} famille(s)</span>
+            <span>Total <b className="g-num">{montant(totalFamilles)}</b></span>
+          </div>
+        </article>
+
+        {/* ── Évolution mensuelle ── */}
+        <article className="g-card g-glass g-rise" style={{ ['--d' as string]: '.28s' }}>
+          <div className="g-card-head">
+            <div>
+              <h3 className="g-card-title">Évolution des montants facturés</h3>
+              <p className="g-card-sub">Un point par mois de facture importé — {parMois.length} mois suivi(s).</p>
+            </div>
+          </div>
+          {parMois.length === 0 ? (
+            <p className="g-empty">Créez une commande avec son mois pour démarrer le suivi.</p>
+          ) : parMois.length === 1 ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true">
+                  <rect x="20" y="14" width="24" height="38" rx="5" fill="#22d3ee" opacity="0.9" />
+                </svg>
+                <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+                  <b>{libelleMois(parMois[0].mois)}</b> · <b className="g-num">{montant(parMois[0].montant)}</b>
+                  <br />
+                  <span style={{ opacity: 0.8 }}>
+                    {parMois[0].lignes.toLocaleString('fr-FR')} lignes · {parMois[0].cmd} commande(s)
+                  </span>
+                </div>
+              </div>
+              <p className="g-empty" style={{ marginTop: 0 }}>
+                Importez les factures des mois précédents (une commande par mois, nommée par ex. « Facture Octobre 2026 »)
+                et l&apos;évolution mensuelle des montants et des familles s&apos;affichera ici automatiquement.
+              </p>
+            </>
+          ) : (
+            <>
+              <svg viewBox={`0 0 560 168`} width="100%" role="img" aria-label="Montants facturés par mois" style={{ display: 'block' }}>
+                {(() => {
+                  const n = derniersMois.length;
+                  const W = 560, H = 168, padX = 8, bas = 132, hautBarre = 96;
+                  const pas = (W - padX * 2) / n;
+                  return derniersMois.map((m, i) => {
+                    const h = Math.max(4, Math.round((m.montant / maxMois) * hautBarre));
+                    const bw = Math.min(46, pas * 0.6);
+                    const x = padX + pas * i + (pas - bw) / 2;
+                    const dernier = i === n - 1;
+                    const coul = dernier ? '#22d3ee' : '#3b82f6';
+                    const [annee, mm] = m.mois.split('-');
+                    return (
+                      <g key={m.mois}>
+                        <rect x={x} y={bas - h} width={bw} height={h} rx="5" fill={coul} opacity={dernier ? 0.95 : 0.75}>
+                          {dernier ? <animate attributeName="opacity" from="0.6" to="0.95" dur="0.6s" fill="freeze" /> : null}
+                        </rect>
+                        <text x={x + bw / 2} y={bas - h - 6} textAnchor="middle" fontSize="10.5" fontWeight="700" fill="#0b1330">
+                          {fmtCourt(m.montant)}
+                        </text>
+                        <text x={x + bw / 2} y={bas + 15} textAnchor="middle" fontSize="10" fill="#54658a">
+                          {['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'][Number(mm) - 1] || mm}
+                        </text>
+                        <text x={x + bw / 2} y={bas + 27} textAnchor="middle" fontSize="8.5" fill="#8494b8">
+                          {annee}
+                        </text>
+                      </g>
+                    );
+                  });
+                })()}
+                <line x1="6" y1={132.5} x2="554" y2={132.5} stroke="#dbe3f3" strokeWidth="1" />
+              </svg>
+              <ul className="g-list" style={{ marginTop: 8 }}>
+                {parMois.slice(-3).reverse().map((m, i, arr) => {
+                  const idx = parMois.indexOf(m);
+                  const prec = idx > 0 ? parMois[idx - 1] : null;
+                  const delta = prec ? m.montant - prec.montant : null;
+                  const pct = prec && prec.montant ? (delta! / prec.montant) * 100 : null;
+                  return (
+                    <li key={m.mois}>
+                      <div className="g-list-item">
+                        <span className="g-list-main">
+                          <b>{libelleMois(m.mois)}</b>
+                          <span>{m.lignes.toLocaleString('fr-FR')} lignes · {m.cmd} commande(s)</span>
+                        </span>
+                        <span className="g-list-side">
+                          <b className="g-num">{montant(m.montant)}</b>{' '}
+                          {delta !== null && (
+                            <span className={`g-badge ${delta >= 0 ? 'is-ok' : 'is-warn'}`} style={{ marginLeft: 6 }}>
+                              <i className="g-dot" />
+                              {delta >= 0 ? '+' : ''}{fmtCourt(Math.abs(delta))}{pct !== null ? ` (${delta >= 0 ? '+' : ''}${pct.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %)` : ''}
+                            </span>
+                          )}
+                          {i === 0 && prec === null && <span style={{ marginLeft: 6 }}><em style={{ opacity: 0.6, fontSize: 12 }}>référence</em></span>}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+          <div className="g-card-foot">
+            <span>Suivi alimenté par les commandes importées (une par mois)</span>
+            <span>Détail par famille dans le tableau ci-dessous</span>
+          </div>
+        </article>
+      </section>
+
+      {parMois.length > 0 && (
+        <section className="g-card g-glass g-rise" style={{ ['--d' as string]: '.3s' }}>
+          <div className="g-card-head">
+            <div>
+              <h3 className="g-card-title">Suivi par famille et par mois</h3>
+              <p className="g-card-sub">
+                Montant facturé de chaque famille, mois après mois — le tableau s&apos;enrichit à chaque import d&apos;un mois précédent.
+              </p>
+            </div>
+          </div>
+          <div className="g-table-wrap">
+            <table className="g-table">
+              <thead>
+                <tr>
+                  <th>Famille</th>
+                  {parMois.map((m) => (
+                    <th key={m.mois} style={{ textAlign: 'right' }}>{libelleMois(m.mois)}</th>
+                  ))}
+                  <th style={{ textAlign: 'right' }}>Cumul</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const fams = [...new Set(parMois.flatMap((m) => Object.keys(m.familles)))].sort((a, b) => {
+                    const t = (f: string) => parMois.reduce((s2, m) => s2 + (m.familles[f]?.m || 0), 0);
+                    return t(b) - t(a);
+                  });
+                  const lignesTable = fams.map((f) => (
+                    <tr key={f}>
+                      <td>
+                        <span className="g-bar-label" style={{ margin: 0 }}>
+                          <i style={{ background: COULEURS[f] || '#3b82f6', color: COULEURS[f] || '#3b82f6' }} />
+                          <b>{f}</b>
+                        </span>
+                      </td>
+                      {parMois.map((m) => (
+                        <td key={m.mois} style={{ textAlign: 'right' }}>
+                          {m.familles[f] ? montant(m.familles[f].m) : <span style={{ opacity: 0.4 }}>—</span>}
+                        </td>
+                      ))}
+                      <td style={{ textAlign: 'right' }}>
+                        <b className="g-num">{montant(parMois.reduce((s2, m) => s2 + (m.familles[f]?.m || 0), 0))}</b>
+                      </td>
+                    </tr>
+                  ));
+                  lignesTable.push(
+                    <tr key="__total">
+                      <td><b>Total</b></td>
+                      {parMois.map((m) => (
+                        <td key={m.mois} style={{ textAlign: 'right' }}>
+                          <b className="g-num">{montant(Object.values(m.familles).reduce((s2, v) => s2 + v.m, 0))}</b>
+                        </td>
+                      ))}
+                      <td style={{ textAlign: 'right' }}>
+                        <b className="g-num">{montant(parMois.reduce((s2, m) => s2 + Object.values(m.familles).reduce((s3, v) => s3 + v.m, 0), 0))}</b>
+                      </td>
+                    </tr>
+                  );
+                  return lignesTable;
+                })()}
+              </tbody>
+            </table>
+          </div>
+          <div className="g-card-foot">
+            <span>{parMois.filter((m) => !m.complet).length > 0 ? `${parMois.filter((m) => !m.complet).length} mois sans détail familles (réimportez ces commandes)` : 'Tous les mois ont leur détail par famille'}</span>
+            <span>Montants masqués pour l&apos;Analyste</span>
+          </div>
+        </section>
+      )}
 
       {filtre === 'toutes' && (
         <section className="g-card g-glass g-rise" style={{ ['--d' as string]: '.28s' }}>
