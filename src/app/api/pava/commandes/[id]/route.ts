@@ -1,8 +1,37 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
-import { dbToCommande, SELECT_COMMANDE } from '@/lib/pava/db-map';
+import { dbToCommande } from '@/lib/pava/db-map';
+import { assemblerLignes } from '@/lib/pava/blob-db';
 
 type Ctx = { params: Promise<{ id: string }> };
+
+/**
+ * Charge une commande SANS requête embarquée (« pava_commandes.select('*, pava_lignes(*)') »).
+ * Chaque table enfant est interrogée directement par commande_id : aucune
+ * dépendance aux relations/FK du cache de schéma PostgREST — des environnements
+ * où ces relations manquent rejetaient la requête avec
+ * « Could not find a relationship between 'pava_commandes' and 'pava_lignes' in the schema cache ».
+ * Les lignes facturables vivent dans le blob pava_fichiers.contenu (assemblerLignes).
+ */
+async function chargerCommande(id: string, avecLignes = true) {
+  const supabase = getSupabase()!;
+  const { data: c, error } = await supabase.from('pava_commandes').select('*').eq('id', id).single();
+  if (error || !c) return null;
+  const [fichiers, decisions, historique, lignes] = await Promise.all([
+    supabase.from('pava_fichiers').select('id, commande_id, nom, date_import, feuilles, nb_lignes, mois').eq('commande_id', id).order('date_import'),
+    supabase.from('pava_decisions').select('*').eq('commande_id', id),
+    supabase.from('pava_historique').select('*').eq('commande_id', id).order('date_action'),
+    avecLignes ? assemblerLignes(id) : Promise.resolve([]),
+  ]);
+  return dbToCommande({
+    ...c,
+    pava_lignes: [], // compat forme : les vraies lignes sont passées ci-dessous
+    pava_fichiers: fichiers.data || [],
+    pava_decisions: decisions.data || [],
+    pava_historique: historique.data || [],
+    lignes_blob: lignes,
+  });
+}
 
 /** GET /api/pava/commandes/[id] — commande complète. */
 export async function GET(_req: Request, { params }: Ctx) {
@@ -10,9 +39,9 @@ export async function GET(_req: Request, { params }: Ctx) {
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
   const { id } = await params;
 
-  const { data, error } = await supabase.from('pava_commandes').select(SELECT_COMMANDE).eq('id', id).single();
-  if (error || !data) return NextResponse.json({ error: 'Commande introuvable.' }, { status: 404 });
-  return NextResponse.json(dbToCommande(data));
+  const commande = await chargerCommande(id);
+  if (!commande) return NextResponse.json({ error: 'Commande introuvable.' }, { status: 404 });
+  return NextResponse.json(commande);
 }
 
 /**
@@ -52,9 +81,11 @@ export async function PATCH(req: Request, { params }: Ctx) {
     await supabase.from('pava_historique').insert({ commande_id: id, action: `Étape → ${body.etape}` });
   }
 
-  const { data, error: err2 } = await supabase.from('pava_commandes').select(SELECT_COMMANDE).eq('id', id).single();
-  if (err2 || !data) return NextResponse.json({ error: err2?.message || 'Rechargement impossible.' }, { status: 500 });
-  return NextResponse.json(dbToCommande(data));
+  // Sans les lignes (blob de ~3 500 lignes) : le client les conserve déjà,
+  // seules les métadonnées (statut, historique, décisions) l'intéressent ici.
+  const commande = await chargerCommande(id, false);
+  if (!commande) return NextResponse.json({ error: 'Rechargement impossible.' }, { status: 500 });
+  return NextResponse.json(commande);
 }
 
 /**
@@ -65,6 +96,20 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
   const { id } = await params;
+
+  // Enfants supprimés EXPLICITEMENT : certaines bases n'ont pas les
+  // FK ON DELETE CASCADE (créées avant leur ajout dans la migration 001),
+  // et sans elles la suppression laissait des lignes orphelines.
+  // NB : pava_lignes n'existe plus (mode blob, migration 003) ; pava_params
+  // ne conserve que les lignes propre à la commande (commande_id non NULL).
+  await Promise.all([
+    supabase.from('pava_corrections').delete().eq('commande_id', id),
+    supabase.from('pava_decisions').delete().eq('commande_id', id),
+    supabase.from('pava_historique').delete().eq('commande_id', id),
+    supabase.from('pava_versions').delete().eq('commande_id', id),
+    supabase.from('pava_fichiers').delete().eq('commande_id', id),
+    supabase.from('pava_params').delete().eq('commande_id', id),
+  ]);
 
   const { error } = await supabase.from('pava_commandes').delete().eq('id', id);
   if (error) {

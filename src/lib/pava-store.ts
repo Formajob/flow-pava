@@ -661,7 +661,12 @@ async function dbSetStatutFacture(mois: string, statut: string): Promise<boolean
       method: 'PATCH',
       body: JSON.stringify({ statut, mois }),
     });
-    const commandes = s.commandes.map((x) => (x.id === idCmd ? c : x));
+    // On préserve les données chargées côté client (lignes du blob, renouvellements
+    // R03, refs COM) : le PATCH renvoie la commande rechargée, et les remplacer
+    // par une version vide faisait disparaître les lignes de l'écran.
+    const commandes = s.commandes.map((x) =>
+      x.id === idCmd ? { ...x, ...c, lignes: x.lignes, renouvellements: x.renouvellements, com: x.com, synthese: x.synthese } : x
+    );
     effacerErreur();
     dbState = assembler(commandes, s.params);
     emit();

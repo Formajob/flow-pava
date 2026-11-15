@@ -104,7 +104,7 @@ export function dbToCommande(c: any): Commande {
     dateCreation: c.date_creation,
     statut: c.statut,
     etape: c.etape,
-    lignes: (c.pava_lignes || []).map(dbToLigne),
+    lignes: (c.lignes_blob || c.pava_lignes || []).map(dbToLigne),
     fichiers: (c.pava_fichiers || []).map(dbToFichier),
     decisions,
     historique: (c.pava_historique || []).map((h: any) => ({ date: h.date_action, action: h.action })),
@@ -112,5 +112,7 @@ export function dbToCommande(c: any): Commande {
   };
 }
 
-/** Colonnes à sélectionner pour une commande complète. */
-export const SELECT_COMMANDE = '*, pava_lignes(*), pava_fichiers(*), pava_decisions(*), pava_historique(*)';
+/* NB : plus AUCUNE requête embarquée (« table.select('*, enfant(*)') ») dans le
+ * projet — pava_lignes n'existe plus (mode blob) et les environnements sans FK
+ * rejettent ces jointures (« Could not find a relationship … in the schema cache »).
+ * Les tables enfants sont toujours interrogées directement par commande_id. */

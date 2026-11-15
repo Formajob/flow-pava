@@ -329,6 +329,11 @@ export default function FacturesPage() {
         </div>
       </header>
 
+      {snap.erreur && (
+        <div className="g-card g-glass" style={{ borderColor: 'var(--g-bad, #dc2626)' }}>
+          <p style={{ fontSize: 13 }}><b>Erreur base de données :</b> {snap.erreur}</p>
+        </div>
+      )}
       <section className="g-hero g-glass g-rise">
         <div>
           <div className="g-kicker"><i /> {validee ? 'Facture validée' : 'Facture en cours'}</div>

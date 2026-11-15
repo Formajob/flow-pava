@@ -53,6 +53,11 @@ export default function ValidationPage() {
         </div>
       </header>
 
+      {snap.erreur && (
+        <div className="g-card g-glass" style={{ borderColor: 'var(--g-bad, #dc2626)' }}>
+          <p style={{ fontSize: 13 }}><b>Erreur base de données :</b> {snap.erreur}</p>
+        </div>
+      )}
       {snap.enChargement && <CarteChargement titre="Chargement de la validation…" texte="Les lignes de la commande sont récupérées pour calculer les totaux à valider." />}
 
       <section className="g-hero g-glass g-rise">
