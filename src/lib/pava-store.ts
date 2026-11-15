@@ -351,7 +351,16 @@ async function api<T>(chemin: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
   });
   const texte = await res.text();
-  const data = texte ? (JSON.parse(texte) as Record<string, unknown>) : {};
+  let data: Record<string, unknown> = {};
+  if (texte) {
+    try {
+      data = JSON.parse(texte) as Record<string, unknown>;
+    } catch {
+      // Réponse non-JSON (ex. 413 « Request Entity Too Large » de l'hébergeur) :
+      // afficher un message lisible au lieu de « Unexpected token… ».
+      throw new Error(`Erreur ${res.status} — réponse du serveur illisible : ${texte.slice(0, 80)}${texte.length > 80 ? '…' : ''}`);
+    }
+  }
   if (!res.ok) throw new Error((data.error as string) || `Erreur ${res.status}`);
   return data as T;
 }

@@ -103,9 +103,17 @@ export default function ImportationPage() {
         if (norm.ligne_total) continue;
         const id = `${snap.mois}-IMP-${String(compteur++).padStart(4, '0')}`;
         norm.ligne_id = id;
-        // montantCalcule = prix attendu du price plan (sinon le montant facturé) → totaux du tableau de bord
+        // Déménagement : si la raison officielle est vide mais que la ligne
+        // source mentionne un déménagement → alimente R09 (la ligne brute
+        // n'est plus envoyée au serveur, on capture l'info ici).
+        if (!norm.raison && Object.values(f.rows[i]).some((v) => /DEMENAG/i.test(String(v)))) {
+          norm.raison = 'DEMENAGEMENT';
+        }
+        // montantCalcule = prix attendu du price plan (sinon le montant facturé) → totaux du tableau de bord.
+        // PAS de `brut` dans l'envoi : 3 579 lignes + brut ≈ 5,3 Mo > limite 4,5 Mo
+        // de Vercel (erreur 413). Sans brut ≈ 2 Mo, et le brut n'est jamais relu.
         const calcule = montantAttendu(norm, snap.params) ?? norm.paiement_pav ?? undefined;
-        nouvelles.push(ligneDepuisRow(norm, id, calcule, f.rows[i]));
+        nouvelles.push(ligneDepuisRow(norm, id, calcule));
       }
     }
     if (nouvelles.length === 0) {

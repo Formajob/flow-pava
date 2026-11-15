@@ -188,8 +188,11 @@ export function metaDepuisRow(r: PavaRow): LigneMeta {
   };
 }
 
-/** Ligne de l'application à partir d'une ligne normalisée (utilisé par la page Importation). */
-export function ligneDepuisRow(r: PavaRow, id: string, montantCalcule: number | undefined, brut: Record<string, unknown>): PavaLigne {
+/** Ligne de l'application à partir d'une ligne normalisée (utilisé par la page Importation).
+ * `brut` est OPTIONNEL : ne pas l'envoyer pour rester sous la limite de taille
+ * des requêtes (4,5 Mo sur Vercel) — il n'est jamais renvoyé au navigateur.
+ * La traçabilité reste assurée par feuille + ligne Excel + meta. */
+export function ligneDepuisRow(r: PavaRow, id: string, montantCalcule: number | undefined, brut?: Record<string, unknown>): PavaLigne {
   const categorie = r.nature === 'RENO' ? 'RENOUVELLEMENT' : r.nature;
   return {
     id,
@@ -208,6 +211,6 @@ export function ligneDepuisRow(r: PavaRow, id: string, montantCalcule: number | 
     feuille: r.feuille,
     ligneExcel: r.ligne_excel,
     meta: metaDepuisRow(r),
-    brut,
+    ...(brut ? { brut } : {}),
   };
 }
