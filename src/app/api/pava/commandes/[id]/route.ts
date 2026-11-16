@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
+import { acteurDe, nonAuthentifie, msgDb } from '@/lib/pava/guard';
 import { dbToCommande } from '@/lib/pava/db-map';
 import { assemblerLignes } from '@/lib/pava/blob-db';
 
@@ -49,7 +50,7 @@ export async function GET(_req: Request, { params }: Ctx) {
  * Un changement de statut est toujours tracé dans l'historique.
  * Retourne la commande complète rechargée.
  */
-export async function PATCH(req: Request, { params }: Ctx) {
+export async function PATCH(req: NextRequest, { params }: Ctx) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
   const { id } = await params;
@@ -61,6 +62,21 @@ export async function PATCH(req: Request, { params }: Ctx) {
     return NextResponse.json({ error: 'Corps de requête invalide.' }, { status: 400 });
   }
 
+  // Validation à deux niveaux côté SERVEUR (audit E1) : seul l'Admin passe
+  // « valide_admin », seul le Directeur passe « validee » — le rôle affiché
+  // côté navigateur (localStorage) ne suffit plus.
+  const acteur = await acteurDe(req);
+  if (!acteur) return nonAuthentifie();
+  if (body.statut) {
+    if (!['en_cours', 'valide_admin', 'validee'].includes(body.statut)) {
+      return NextResponse.json({ error: 'Statut inconnu.' }, { status: 400 });
+    }
+    const requis: Record<string, string> = { valide_admin: 'admin', validee: 'directeur' };
+    if (requis[body.statut] && acteur.role !== requis[body.statut]) {
+      return NextResponse.json({ error: `Seul le rôle « ${requis[body.statut]} » peut passer ce statut.` }, { status: 403 });
+    }
+  }
+
   const maj: Record<string, unknown> = {};
   if (body.statut) maj.statut = body.statut;
   if (body.etape) maj.etape = body.etape;
@@ -69,12 +85,13 @@ export async function PATCH(req: Request, { params }: Ctx) {
   if (Object.keys(maj).length === 0) return NextResponse.json({ error: 'Rien à mettre à jour.' }, { status: 400 });
 
   const { error } = await supabase.from('pava_commandes').update(maj).eq('id', id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   if (body.statut) {
     await supabase.from('pava_historique').insert({
       commande_id: id,
-      action: `Statut → ${body.statut}${body.statut === 'validee' ? ' (validée par le Directeur)' : body.statut === 'valide_admin' ? ' (validée par l’Admin)' : ''}`,
+      // Auteur pris dans le jeton signé, jamais dans le corps (audit M2/M7).
+      action: `Statut → ${body.statut} (par ${acteur.email} · ${acteur.role})`,
     });
   }
   if (body.etape) {
@@ -115,7 +132,7 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   if (error) {
     const bloquee = /validée par le Directeur/i.test(error.message);
     return NextResponse.json(
-      { error: bloquee ? 'Commande validée par le Directeur : suppression interdite.' : error.message },
+      { error: bloquee ? 'Commande validée par le Directeur : suppression interdite.' : msgDb(error) },
       { status: bloquee ? 403 : 500 }
     );
   }

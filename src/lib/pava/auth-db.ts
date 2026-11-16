@@ -24,7 +24,7 @@ export function hasherMotDePasse(motDePasse: string): string {
 }
 
 export function verifierMotDePasse(motDePasse: string, stocke: string | null): boolean {
-  if (!stocke) return true; // compte sans mot de passe défini : accès libre (transition)
+  if (!stocke) return false; // compte sans mot de passe défini : accès REFUSÉ (audit C3b)
   const parties = stocke.split('$');
   if (parties.length !== 3 || parties[0] !== 'scrypt') return false;
   try {
@@ -44,7 +44,9 @@ export async function chercherUtilisateurDb(email: string): Promise<UtilisateurD
   const { data, error } = await supabase
     .from('pava_utilisateurs')
     .select('id, email, nom, role, multi_roles, mot_de_passe, actif')
-    .ilike('email', email.trim())
+    // Égalité EXACTE (insensible à la casse via lowercasing) : .ilike laissait
+    // passer les jokers % et _ (audit C3c).
+    .eq('email', email.trim().toLowerCase())
     .eq('actif', true)
     .limit(1);
   if (error || !data || data.length === 0) return null;

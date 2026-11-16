@@ -94,8 +94,8 @@ export default function AdminPage() {
   };
 
   const changerMdp = async (u: UtilisateurRow) => {
-    if (!mdpPour || mdpPour.valeur.length < 6) {
-      setMsgUsers('Mot de passe : 6 caractères minimum.');
+    if (!mdpPour || mdpPour.valeur.length < 12) {
+      setMsgUsers('Mot de passe : 12 caractères minimum.');
       return;
     }
     await majUser(u.id, { motDePasse: mdpPour.valeur }, `Mot de passe de ${u.email} changé.`);
@@ -260,7 +260,7 @@ export default function AdminPage() {
                     <option value="directeur">Directeur</option>
                   </select>
                 </label>
-                <label style={{ flex: '1 1 150px', fontSize: 12, fontWeight: 700 }}>Mot de passe (≥ 6)
+                <label style={{ flex: '1 1 150px', fontSize: 12, fontWeight: 700 }}>Mot de passe (≥ 12)
                   <input className="g-input" style={{ marginTop: 4 }} type="password" value={nouveau.motDePasse} onChange={(e) => setNouveau({ ...nouveau, motDePasse: e.target.value })} />
                 </label>
                 <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, fontWeight: 700, paddingBottom: 8 }}>

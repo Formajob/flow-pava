@@ -4,6 +4,11 @@ import { trouverUtilisateur, type PavaRole } from '@/lib/pava-users';
 import { chercherUtilisateurDb, verifierMotDePasse } from '@/lib/pava/auth-db';
 import { getSupabase } from '@/lib/supabase';
 
+/** Compteurs d'échecs de connexion par e-mail (audit E4). */
+const tentatives = new Map<string, { n: number; blocage: number }>();
+const MAX_TENTATIVES = 5;
+const BLOCAGE_MS = 15 * 60 * 1000;
+
 /**
  * NextAuth — route API /api/auth/[...nextauth]
  *
@@ -17,7 +22,10 @@ import { getSupabase } from '@/lib/supabase';
  * mot de passe non vérifié — pour développer sans la base.
  */
 const handler = NextAuth({
-  session: { strategy: 'jwt' },
+  secret: process.env.NEXTAUTH_SECRET,
+  // Session de 8 h au lieu de 30 jours (audit M1) — un compte désactivé ou
+  // dont le rôle change ne garde son accès que jusqu'à cette échéance.
+  session: { strategy: 'jwt', maxAge: 60 * 60 * 8 },
   providers: [
     CredentialsProvider({
       name: 'credentials',
@@ -31,11 +39,24 @@ const handler = NextAuth({
         const password = credentials?.password;
         if (!email || !password) return null;
 
+        // Anti-force-brute (audit E4) : 5 échecs par e-mail → 15 min de blocage.
+        // Compteur en mémoire (par instance serveur) — compléter idéalement par
+        // une règle de limitation de débit côté pare-feu Vercel.
+        const t = tentatives.get(email);
+        if (t && t.blocage > Date.now()) return null;
+        const echec = () => {
+          const e = tentatives.get(email) || { n: 0, blocage: 0 };
+          e.n += 1;
+          if (e.n >= MAX_TENTATIVES) { e.blocage = Date.now() + BLOCAGE_MS; e.n = 0; }
+          tentatives.set(email, e);
+        };
+
         if (getSupabase()) {
           // --- Mode base : table pava_utilisateurs ---
           const u = await chercherUtilisateurDb(email);
-          if (!u) return null; // inconnu ou désactivé
-          if (!verifierMotDePasse(password, u.mot_de_passe)) return null; // mauvais mot de passe
+          if (!u) { echec(); return null; } // inconnu ou désactivé
+          if (!verifierMotDePasse(password, u.mot_de_passe)) { echec(); return null; } // mauvais mot de passe
+          tentatives.delete(email); // succès : compteur remis à zéro
 
           const roleDefaut = u.role as PavaRole;
           const roles: PavaRole[] = u.multi_roles ? ['analyste', 'admin', 'directeur'] : [roleDefaut];
@@ -46,6 +67,10 @@ const handler = NextAuth({
         }
 
         // --- Mode démo : comptes en code, mot de passe libre ---
+        // JAMAIS en production : si Supabase est mal configuré, on REFUSE
+        // (fail closed, audit C3a) au lieu d'ouvrir l'accès. Escape hatch local
+        // explicite : PAVA_ALLOW_DEMO=1 (tests/démo sans base).
+        if (process.env.NODE_ENV === 'production' && process.env.PAVA_ALLOW_DEMO !== '1') return null;
         const utilisateur = trouverUtilisateur(email);
         if (!utilisateur) return null;
         const demande = (credentials?.role || '').trim().toLowerCase() as PavaRole;

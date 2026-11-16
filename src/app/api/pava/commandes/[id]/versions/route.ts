@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { msgDb } from '@/lib/pava/guard';
 import { getSupabase } from '@/lib/supabase';
 
 /**
@@ -43,7 +44,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     })
     .select()
     .single();
-  if (error || !data) return NextResponse.json({ error: error?.message || 'Version non enregistrée.' }, { status: 500 });
+  if (error || !data) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   await supabase.from('pava_historique').insert({
     commande_id: id,

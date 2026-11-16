@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { msgDb } from '@/lib/pava/guard';
 import { getSupabase } from '@/lib/supabase';
 import { dbToCommande } from '@/lib/pava/db-map';
 
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
     .insert({ nom, mois: body.mois || null, statut: 'en_cours', etape: 'importation' })
     .select()
     .single();
-  if (error || !cmd) return NextResponse.json({ error: error?.message || 'Création impossible.' }, { status: 500 });
+  if (error || !cmd) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   await supabase.from('pava_historique').insert({
     commande_id: cmd.id,

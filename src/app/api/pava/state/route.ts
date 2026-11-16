@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { dbToCommande } from '@/lib/pava/db-map';
+import { msgDb } from '@/lib/pava/guard';
 import { DEFAULT_PARAMS, type PavaParams } from '@/lib/pava/types';
 
 /**
@@ -85,6 +86,6 @@ export async function GET() {
 
     return NextResponse.json({ commandes, params });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    return NextResponse.json({ error: msgDb(e) }, { status: 500 });
   }
 }

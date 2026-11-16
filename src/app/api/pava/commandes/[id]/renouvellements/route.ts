@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { msgDb } from '@/lib/pava/guard';
 import { getSupabase } from '@/lib/supabase';
 
 /**
@@ -19,7 +20,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     .from('pava_commandes')
     .select('id, mois')
     .neq('id', id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   const refs: Array<{ periode: string; noCli: string; codeService: string; feuille: string; ligneExcel: number }> = [];
   for (const c of cmds || []) {

@@ -190,6 +190,9 @@ function LoginForm() {
                 <a href="mailto:support@acx.ma?subject=Demande%20de%20compte%20ACX%20Flow">Contactez l’administrateur</a>
               </p>
 
+              {/* Raccourcis de rôles pour les tests/démo LOCAUX uniquement —
+                  jamais affichés en production (audit M4). */}
+              {process.env.NODE_ENV === 'production' ? null : (
               <div className="lg-demo">
                 <p>Accès Jawad · choisir le rôle</p>
                 <div>
@@ -199,6 +202,7 @@ function LoginForm() {
                 </div>
                 <p className="lg-demo-hint">Rôles fixes : Ghita.Khalil@videotron.com → Analyste · marzouk.ousmane@videotron.com → Directeur</p>
               </div>
+              )}
 
               <p className="lg-ver">Login autonome · v6</p>
             </form>

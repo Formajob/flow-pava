@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { msgDb } from '@/lib/pava/guard';
 import { getSupabase } from '@/lib/supabase';
 import { assemblerLignes, recalculerStatsCommande, sansBrut } from '@/lib/pava/blob-db';
 import type { PavaLigne } from '@/lib/pava-store';
@@ -48,7 +49,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       { commande_id: id, ligne_ref: refLigne, patch: patchFusionne, supprime: false },
       { onConflict: 'commande_id,ligne_ref' }
     );
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   const stats = await recalculerStatsCommande(id);
   const lignes = sansBrut(await assemblerLignes(id));
@@ -73,7 +74,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       { commande_id: id, ligne_ref: refLigne, patch: {}, supprime: true },
       { onConflict: 'commande_id,ligne_ref' }
     );
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   const stats = await recalculerStatsCommande(id);
   return NextResponse.json({ ok: true, stats });

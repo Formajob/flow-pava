@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { msgDb } from '@/lib/pava/guard';
 import { getSupabase } from '@/lib/supabase';
 import { DEFAULT_PARAMS, type PavaParams } from '@/lib/pava/types';
 
@@ -8,7 +9,7 @@ export async function GET() {
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
 
   const { data, error } = await supabase.from('pava_params').select('params').is('commande_id', null).limit(1);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
   return NextResponse.json({ params: (data?.[0]?.params as PavaParams) || DEFAULT_PARAMS });
 }
 
@@ -31,11 +32,11 @@ export async function PUT(req: Request) {
     .update({ params: body.params, date_maj: new Date().toISOString() })
     .is('commande_id', null)
     .select();
-  if (errMaj) return NextResponse.json({ error: errMaj.message }, { status: 500 });
+  if (errMaj) return NextResponse.json({ error: msgDb(errMaj) }, { status: 500 });
 
   if (!maj || maj.length === 0) {
     const { error: errIns } = await supabase.from('pava_params').insert({ commande_id: null, params: body.params });
-    if (errIns) return NextResponse.json({ error: errIns.message }, { status: 500 });
+    if (errIns) return NextResponse.json({ error: msgDb(errIns) }, { status: 500 });
   }
 
   return NextResponse.json({ params: body.params });

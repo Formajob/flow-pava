@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { acteurDe, msgDb } from '@/lib/pava/guard';
 import { getSupabase } from '@/lib/supabase';
 
 /**
@@ -6,7 +7,7 @@ import { getSupabase } from '@/lib/supabase';
  * sur une incohérence. Body : { ref, regle?, statut, commentaire }
  * Unicité (commande, ref) ⇒ le même cas n'est pas re-flaggé le mois suivant.
  */
-export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
   const { id } = await params;
@@ -22,15 +23,16 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const statut = body.statut || 'ouvert';
   if (!ref) return NextResponse.json({ error: 'Référence d’anomalie manquante.' }, { status: 400 });
 
+  const decideur = await acteurDe(req);
   const { data, error } = await supabase
     .from('pava_decisions')
     .upsert(
-      { commande_id: id, ref_anomalie: ref, regle: body.regle || null, statut, commentaire: body.commentaire || '' },
+      { commande_id: id, ref_anomalie: ref, regle: body.regle || null, statut, commentaire: body.commentaire || '', decide_par: decideur?.email ?? null },
       { onConflict: 'commande_id,ref_anomalie' }
     )
     .select()
     .single();
-  if (error || !data) return NextResponse.json({ error: error?.message || 'Décision non enregistrée.' }, { status: 500 });
+  if (error || !data) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   return NextResponse.json({ ok: true, ref, statut: data.statut, commentaire: data.commentaire });
 }
@@ -41,7 +43,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
  * toutes les anomalies référencées (ex. « valider tout le filtre »),
  * au lieu de les traiter une par une. Réponse : { ok, n }
  */
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
   const { id } = await params;
@@ -61,11 +63,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (refs.length === 0) return NextResponse.json({ error: 'Aucune référence fournie.' }, { status: 400 });
 
   const commentaire = (body.commentaire || '').trim();
-  const rangees = refs.map((ref) => ({ commande_id: id, ref_anomalie: ref, statut, commentaire }));
+  const decideur = await acteurDe(req);
+  const rangees = refs.map((ref) => ({ commande_id: id, ref_anomalie: ref, statut, commentaire, decide_par: decideur?.email ?? null }));
   const { error } = await supabase
     .from('pava_decisions')
     .upsert(rangees, { onConflict: 'commande_id,ref_anomalie' });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   return NextResponse.json({ ok: true, n: rangees.length });
 }

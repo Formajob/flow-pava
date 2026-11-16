@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { msgDb } from '@/lib/pava/guard';
 import { getToken } from 'next-auth/jwt';
 import { getSupabase } from '@/lib/supabase';
 import { hasherMotDePasse } from '@/lib/pava/auth-db';
@@ -42,8 +43,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (body.multiRoles !== undefined) maj.multi_roles = Boolean(body.multiRoles);
   if (body.actif !== undefined) maj.actif = Boolean(body.actif);
   if (body.motDePasse !== undefined) {
-    if (body.motDePasse.length < 6) {
-      return NextResponse.json({ error: 'Le mot de passe doit faire au moins 6 caractères.' }, { status: 400 });
+    if (body.motDePasse.length < 12) {
+      return NextResponse.json({ error: 'Le mot de passe doit faire au moins 12 caractères.' }, { status: 400 });
     }
     maj.mot_de_passe = hasherMotDePasse(body.motDePasse);
   }
@@ -55,7 +56,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     .eq('id', id)
     .select('id, email, nom, role, multi_roles, actif')
     .single();
-  if (error || !data) return NextResponse.json({ error: error?.message || 'Compte introuvable.' }, { status: 500 });
+  if (error || !data) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   return NextResponse.json({ utilisateur: data });
 }
@@ -78,6 +79,6 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   }
 
   const { error } = await supabase.from('pava_utilisateurs').delete().eq('id', id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

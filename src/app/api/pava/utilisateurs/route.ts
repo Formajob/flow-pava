@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { msgDb } from '@/lib/pava/guard';
 import { getToken } from 'next-auth/jwt';
 import { getSupabase } from '@/lib/supabase';
 import { hasherMotDePasse } from '@/lib/pava/auth-db';
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     .from('pava_utilisateurs')
     .select('id, email, nom, role, multi_roles, actif, date_creation')
     .order('email');
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: msgDb(error) }, { status: 500 });
 
   return NextResponse.json({ utilisateurs: data || [] });
 }
@@ -54,8 +55,8 @@ export async function POST(req: NextRequest) {
   if (!['analyste', 'admin', 'directeur'].includes(role)) {
     return NextResponse.json({ error: 'Rôle inconnu.' }, { status: 400 });
   }
-  if (body.motDePasse && body.motDePasse.length < 6) {
-    return NextResponse.json({ error: 'Le mot de passe doit faire au moins 6 caractères.' }, { status: 400 });
+  if (body.motDePasse && body.motDePasse.length < 12) {
+    return NextResponse.json({ error: 'Le mot de passe doit faire au moins 12 caractères.' }, { status: 400 });
   }
 
   const { data, error } = await supabase
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest) {
   if (error) {
     const dejaLa = /duplicate key|unique/i.test(error.message);
     return NextResponse.json(
-      { error: dejaLa ? 'Cette adresse existe déjà.' : error.message },
+      { error: dejaLa ? 'Cette adresse existe déjà.' : msgDb(error) },
       { status: dejaLa ? 409 : 500 }
     );
   }

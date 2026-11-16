@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { acteurDe, msgDb } from '@/lib/pava/guard';
 import { getSupabase } from '@/lib/supabase';
 import { dbToFichier } from '@/lib/pava/db-map';
 import { recalculerStatsCommande, sansBrut } from '@/lib/pava/blob-db';
@@ -16,7 +17,7 @@ import type { PavaLigne, ImportedFile } from '@/lib/pava-store';
  *
  * Retour : { fichier, nbLignes, lignes (sans brut), stats }
  */
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase non configuré.' }, { status: 503 });
   const { id } = await params;
@@ -48,12 +49,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       feuilles: fichier.feuilles || [],
       nb_lignes: lignes.length,
       mois: fichier.mois || null,
+      // Qui a importé : lu dans le jeton signé (audit M2).
+      importe_par: (await acteurDe(req))?.email ?? null,
       contenu: [],
     })
     .select()
     .single();
   if (errFic || !fic) {
-    return NextResponse.json({ error: errFic?.message || 'Enregistrement du fichier impossible.' }, { status: 500 });
+    return NextResponse.json({ error: msgDb(errFic) }, { status: 500 });
   }
 
   // 2. Les lignes → un seul blob, ids stables et uniques
@@ -71,7 +74,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .eq('id', fic.id);
   if (errMaj) {
     await supabase.from('pava_fichiers').delete().eq('id', fic.id);
-    return NextResponse.json({ error: `Enregistrement des lignes impossible : ${errMaj.message}` }, { status: 500 });
+    return NextResponse.json({ error: msgDb(errMaj) }, { status: 500 });
   }
 
   // 3. Totaux de la commande (tableau de bord sans charger les lignes)

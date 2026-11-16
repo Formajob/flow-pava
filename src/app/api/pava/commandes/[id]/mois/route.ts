@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { msgDb } from '@/lib/pava/guard';
 import { getSupabase } from '@/lib/supabase';
 
 /**
@@ -33,14 +34,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   // 1) La commande elle-même
   const { error: errCmd } = await supabase.from('pava_commandes').update({ mois: mois || null }).eq('id', id);
-  if (errCmd) return NextResponse.json({ error: errCmd.message }, { status: 500 });
+  if (errCmd) return NextResponse.json({ error: msgDb(errCmd) }, { status: 500 });
 
   // 2) Re-timbrer les lignes de chaque blob (et la colonne mois des fichiers)
   const { data: fics, error: errFics } = await supabase
     .from('pava_fichiers')
     .select('id, contenu')
     .eq('commande_id', id);
-  if (errFics) return NextResponse.json({ error: errFics.message }, { status: 500 });
+  if (errFics) return NextResponse.json({ error: msgDb(errFics) }, { status: 500 });
 
   let nbLignes = 0;
   for (const f of fics || []) {
@@ -51,7 +52,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       .from('pava_fichiers')
       .update({ contenu: maj, mois: mois || null })
       .eq('id', f.id);
-    if (errBlob) return NextResponse.json({ error: `Re-timbrage impossible (${errBlob.message}).` }, { status: 500 });
+    if (errBlob) return NextResponse.json({ error: msgDb(errBlob) }, { status: 500 });
     nbLignes += lignes.length;
   }
 
