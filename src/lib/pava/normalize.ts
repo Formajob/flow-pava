@@ -21,10 +21,47 @@ function norm(s: string) {
   return s.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-/** Détecte le type de feuille par son nom (insensible casse/espaces). */
-export function detecterFeuille(nom: string, colonnes: string[]): FeuilleDetectee {
+/**
+ * Détecte le type de feuille : 1) par son nom (insensible casse/espaces),
+ * 2) à défaut par son CONTENU — colonnes présentes + valeurs d'un échantillon
+ * (un fichier renommé ou resserré doit quand même être importé et analysé,
+ * pas silencieusement ignoré).
+ */
+export function detecterFeuille(
+  nom: string,
+  colonnes: string[],
+  echantillon: Record<string, unknown>[] = [],
+): FeuilleDetectee {
   const n = norm(nom);
   const cols = colonnes.map(norm).join(' | ');
+  const ensemble = new Set(colonnes.map(norm));
+  const a = (...noms: string[]) => noms.some((x) => ensemble.has(norm(x)));
+
+  /** Nature devinée depuis les données : colonne type de commande + code source. */
+  const natureDepuisContenu = (): { nature: Nature; detail: string } => {
+    const scores: Record<'reno' | 'ajout' | 'saca', number> = { reno: 0, ajout: 0, saca: 0 };
+    const colType = ['TYPE_COMMANDE_COR', 'TYPE_COMMANDE', 'COMMANDES', 'COMMANDE', 'TYPE_CMD'].find((c) => ensemble.has(norm(c)));
+    const colSrc = ['CD_SRC_COM', 'SRC_COM_TXT', 'SRC_COM', 'SOURCE', 'No Source Ci'].find((c) => ensemble.has(norm(c)));
+    for (const row of echantillon) {
+      const val = (c?: string) => (c ? String(row[c] ?? '') : '');
+      const t = val(colType).toUpperCase();
+      if (/RENOUVEL|NOUVELLE|RENO\b/.test(t)) scores.reno += 2;
+      if (/AJOUT|BRANCHE/.test(t)) scores.ajout += 2;
+      const src = val(colSrc).toUpperCase().trim();
+      if (src === 'SACA' || src === '7' || src === '07') scores.saca += 2;
+    }
+    // Indices venant des colonnes elles-mêmes (feuille sans type ni source lisible).
+    if (/renouvel|reno\b/.test(cols)) scores.reno += 1;
+    if (/ajout|branchement/.test(cols)) scores.ajout += 1;
+    if (/saca/.test(cols)) scores.saca += 1;
+    if (/non.?factur/.test(cols)) return { nature: 'NON_FACTUREE', detail: 'colonnes évoquant des commandes non facturées' };
+    const best = (Object.entries(scores) as ['reno' | 'ajout' | 'saca', number][]).sort((x, y) => y[1] - x[1])[0];
+    if (best[1] > 0) {
+      const nature: Nature = best[0] === 'reno' ? 'RENO' : best[0] === 'saca' ? 'SACA' : 'AJOUT';
+      return { nature, detail: best[0] === 'reno' ? 'commandes « NOUVELLEMENT »' : best[0] === 'saca' ? 'source SACA' : 'commandes « AJOUT »' };
+    }
+    return { nature: 'AJOUT', detail: 'aucun indice — hypothèse AJOUT' };
+  };
 
   if (n.includes('price plan') || n.includes('priceplan')) {
     return { nom, format: 'VL', nature: 'AJOUT', colonnes, ignorer: true, avertissement: 'Price Plan : sert au recalcul, jamais source de lignes.' };
@@ -49,10 +86,17 @@ export function detecterFeuille(nom: string, colonnes: string[]): FeuilleDetecte
   }
   if (n.includes('renouvellement')) return { nom, format: 'VL', nature: 'RENO', colonnes };
   if (n.includes('ajout')) return { nom, format: 'VL', nature: 'AJOUT', colonnes };
-  if (cols.includes('no_cli') && cols.includes('paiement_pav')) {
-    return { nom, format: 'VL', nature: 'AJOUT', colonnes, avertissement: 'Feuille non reconnue : traitée comme AJOUT, à confirmer.' };
+  // ── Nom inconnu : décider par le CONTENU (colonnes + données) ──
+  const aLaFois = (...noms: string[]) => noms.every((x) => cols.includes(norm(x)));
+  const estFeuilleData = a('NO_CLI', 'No Client', 'NO_CLIENT', 'NUM_CLI') || aLaFois('CLE_COM', 'NO_SERV');
+  if (estFeuilleData) {
+    const { nature, detail } = natureDepuisContenu();
+    return {
+      nom, format: 'VL', nature, colonnes,
+      avertissement: `Nom de feuille inconnu — importée comme ${nature === 'RENO' ? 'RENOUVELLEMENT' : nature === 'SACA' ? 'SOURCE SACA' : nature} (${detail}). Vérifiez la catégorie.`,
+    };
   }
-  return { nom, format: 'VL', nature: 'AJOUT', colonnes, ignorer: true, avertissement: 'Feuille non reconnue : ignorée.' };
+  return { nom, format: 'VL', nature: 'AJOUT', colonnes, ignorer: true, avertissement: 'Feuille sans colonnes PAVA reconnues (ni N° client, ni commande/service) : ignorée.' };
 }
 
 const FAMILLES = ['CAB', 'CELL', 'NUM', 'REDO', 'TIPN', 'TPC', 'WIFIPRO'];
@@ -81,11 +125,13 @@ export function familleDepuisCode(code: string, officielle = ''): string {
   return FAMILLES.includes(c) ? c : 'AUTRE';
 }
 
-/** Source : CD_SRC_COM (VL) ou No Source Ci (ACJ). 43=TMA, 45=GE, 41=RETA, 07=SACA. */
+/** Source : CD_SRC_COM (VL) ou No Source Ci (ACJ). 43=TMA, 45=GE, 41=RETA, 07=SACA.
+ * Certains fichiers donnent le code (45), d'autres le texte (« GE ») : on mappe. */
 export function sourceDepuisCode(code: string): string {
   const c = (code || '').trim();
   if (c === '7') return '07';
-  return c || '43';
+  const texte: Record<string, string> = { GE: '45', TMA: '43', RETA: '41', SACA: '07' };
+  return texte[c.toUpperCase()] || c || '43';
 }
 
 /** Marque les lignes de total (sans client ni date, seulement un montant). */
@@ -134,45 +180,45 @@ export function normaliserLigne(brute: Record<string, unknown>, feuille: Feuille
   };
 
   const acj = feuille.format === 'ACJ';
-  const noCli = str(get('NO_CLI', 'No Client'));
-  const dateCompl = dateIso(get('DT_COMPL_COM', 'Date Completée'));
-  const paiement = num(get('PAIEMENT_PAV', 'Paiement PAV'));
+  const noCli = str(get('NO_CLI', 'No Client', 'NO_CLIENT', 'NUM_CLI'));
+  const dateCompl = dateIso(get('DT_COMPL_COM', 'Date Completée', 'DT_COMPL', 'DATE_COMPL', 'COMPL_D'));
+  const paiement = num(get('PAIEMENT_PAV', 'Paiement PAV', 'PAIEMENT', 'MT_PAV', 'MONTANT'));
 
   // Mois de complétion : colonnes officielles d'abord (fiables), sinon la date
-  const an = num(get('DT_COMPL_AN_VL'));
-  const mois = num(get('DT_COMPL_MOIS_VL'));
+  const an = num(get('DT_COMPL_AN_VL', 'DT_COMPL_AN', 'COMPL_AN', 'AN_VL'));
+  const mois = num(get('DT_COMPL_MOIS_VL', 'DT_COMPL_MOIS', 'COMPL_MOIS', 'MOIS_VL'));
   const moisCompl = an && mois ? `${an}-${pad(mois)}` : dateCompl ? dateCompl.slice(0, 7) : null;
 
-  const codeService = acj ? str(get('Groupe Service')) : str(get('DESC_ABR_SERV'));
-  const famille = familleDepuisCode(codeService, acj ? str(get('Groupe Service')) : str(get('SOUS_FAMILLE_AFF')));
-  const qty = num(get('QT_SERV_COM_COMPL', 'Quantite Services')) ?? 1;
+  const codeService = acj ? str(get('Groupe Service')) : str(get('DESC_ABR_SERV', 'ABR_SERV', 'CODE_SERVICE'));
+  const famille = familleDepuisCode(codeService, acj ? str(get('Groupe Service')) : str(get('SOUS_FAMILLE_AFF', 'FAMILLE_AFF', 'FAMILLE', 'SOUS_FAMILLE')));
+  const qty = num(get('QT_SERV_COM_COMPL', 'Quantite Services', 'QT_SERV_COM', 'QT_SERV', 'QUANTITE', 'QTE')) ?? 1;
 
   return {
     periode,
     feuille: feuille.nom,
     format: feuille.format,
     ligne_excel: ligneExcel,
-    cle_com: str(get('CLE_COM')),
+    cle_com: str(get('CLE_COM', 'REF_COM')),
     no_cli: noCli,
-    nom_client: str(get('NOM_CLIENT')),
+    nom_client: str(get('NOM_CLIENT', 'NOM_CLI')),
     nature: feuille.nature,
     famille,
     code_service: codeService,
-    puissance: str(get('PUISSANCE')),
-    nb_mois_eng: num(get('NB_MOIS_ENG')),
+    puissance: str(get('PUISSANCE', 'PUISS')),
+    nb_mois_eng: num(get('NB_MOIS_ENG', 'MOIS_ENG', 'NB_MOIS', 'DUREE_ENG')),
     qty: qty || 1,
     date_compl: dateCompl,
     mois_compl: moisCompl,
-    src_code: sourceDepuisCode(str(get('CD_SRC_COM', 'No Source Ci'))),
-    vendeur_no: str(get('NO_VENDEUR', 'No Employé')),
-    vendeur_nom: str(get('NOM_VENDEUR')),
-    tp_com_ci: str(get('TP_COM_CI')),
-    raison: str(get('DESC_RSN_COM', 'Raison Du Débranchement')),
+    src_code: sourceDepuisCode(str(get('CD_SRC_COM', 'No Source Ci', 'SRC_COM', 'CD_SRC'))),
+    vendeur_no: str(get('NO_VENDEUR', 'No Employé', 'NUM_VENDEUR')),
+    vendeur_nom: str(get('NOM_VENDEUR', 'VENDEUR_NOM')),
+    tp_com_ci: str(get('TP_COM_CI', 'TP_COM')),
+    raison: str(get('DESC_RSN_COM', 'Raison Du Débranchement', 'RSN_COM', 'DESC_RSN')),
     paiement_pav: paiement,
     ligne_total: estLigneTotal(noCli, dateCompl, paiement),
     ligne_id: '',
-    no_serv: str(get('NO_SERV')),
-    type_cmd: str(get('TYPE_COMMANDE_COR', 'Type Commande')),
+    no_serv: str(get('NO_SERV', 'NUM_SERV')),
+    type_cmd: str(get('TYPE_COMMANDE_COR', 'Type Commande', 'TYPE_COMMANDE', 'COMMANDES', 'TYPE_CMD')),
     // ACJ : pas de forfait ni d'engagement → Internet et TPC en ajout ne sont pas contrôlables
     verifiable: !(acj && feuille.nature === 'AJOUT' && (famille === 'CAB' || famille === 'TPC')),
     ancienne: false,

@@ -75,7 +75,9 @@ export default function ImportationPage() {
         const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
         if (rows.length === 0) continue;
         const colonnes = Object.keys(rows[0]);
-        const detectee = detecterFeuille(nomFeuille, colonnes);
+        // Échantillon de lignes : la détection par contenu (feuille renommée)
+        // s'appuie sur les colonnes ET les valeurs.
+        const detectee = detecterFeuille(nomFeuille, colonnes, rows.slice(0, 50));
         // Feuilles de référence (Price Plan, synthèse, COM, inconnues) : jamais
         // des lignes facturables → décochées et verrouillées à l'import.
         const coche = !detectee.ignorer;
