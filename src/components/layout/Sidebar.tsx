@@ -9,6 +9,7 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
+import { signOut } from 'next-auth/react';
 import { FlowLogo, FlowTag } from '@/components/brand/FlowBrand';
 
 export interface MenuItem {
@@ -224,6 +225,14 @@ function SidebarInner({ items, spaceLabel, userName, userMeta }: SidebarProps) {
             <span>{userMeta}</span>
           </span>
         </div>
+        <button
+          type="button"
+          className="g-btn g-btn--ghost g-btn--sm"
+          style={{ width: '100%', marginTop: 8 }}
+          onClick={() => signOut({ callbackUrl: '/login' })}
+        >
+          Se déconnecter
+        </button>
         <div className="g-side-foot">
           Espace VL PAVA · Facturation PAV Affaire
         </div>

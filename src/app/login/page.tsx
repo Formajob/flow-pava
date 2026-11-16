@@ -118,7 +118,7 @@ function LoginForm() {
             <span className="lg-chip"><i /> Espace VL PAVA</span>
             <h1>Votre équipe.<br /><em>au même rythme.</em></h1>
             <p>
-              Facturation mensuelle Videotron PAV Affaire — réception des fichiers, analyse des incohérences, validation Admin puis Directeur, génération des factures.
+              Facturation mensuelle PAV Affaire — import, analyse, validation, factures.
             </p>
 
             <div className="lg-tiles">
@@ -217,7 +217,7 @@ function LoginForm() {
             <div className="lg-legal-body">
               <p>Plateforme interne, développée exclusivement pour <b>Xceed Maroc</b>.</p>
               <p>
-                <b>Entreprise cliente :</b> Videotron — activité PAV Affaire (Vidéotron Affaire).
+                <b>Activité :</b> PAV Affaire
                 Plateforme créée pour les besoins internes de l&apos;équipe FLOW VL.
               </p>
               <p>

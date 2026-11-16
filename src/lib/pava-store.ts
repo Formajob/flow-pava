@@ -24,7 +24,7 @@ export type Role = 'analyste' | 'admin' | 'directeur';
 export type Categorie = 'AJOUT' | 'RENOUVELLEMENT' | 'SACA' | 'NON_FACTUREE';
 
 export interface PavaLigne {
-  /** Clé commande Videotron (CLE_COM) — rapprochement R07/O-8. */
+  /** Clé commande client (CLE_COM) — rapprochement R07/O-8. */
   cleCom?: string;
   /** Engagement en mois (NB_MOIS_ENG) — prix TPC exact. */
   engagement?: number | null;
@@ -429,10 +429,12 @@ if (DB_MODE && typeof window !== 'undefined') {
 
 async function dbCreateCommande(nom: string, mois?: string): Promise<boolean> {
   const p = lirePrefs();
-  const m = mois || p.mois || new Date().toISOString().slice(0, 7);
+  // '' = volontairement SANS période (fichier de performance de production,
+  // vérification ponctuelle…) : pas de repli sur le mois courant.
+  const m = mois === undefined || mois === null ? (p.mois || new Date().toISOString().slice(0, 7)) : mois;
   try {
     const c = await api<Commande>('/commandes', { method: 'POST', body: JSON.stringify({ nom, mois: m }) });
-    ecrirePrefs({ ...p, mois: m, activeCommandeId: c.id });
+    ecrirePrefs({ ...p, ...(m ? { mois: m } : {}), activeCommandeId: c.id });
     lignesChargees.add(c.id); // nouvelle commande : aucune ligne à charger
     effacerErreur();
     dbState = assembler([...etatDb().commandes, c], etatDb().params);
@@ -860,6 +862,38 @@ export function createCommande(nom: string, mois?: string): Promise<boolean> | b
     mois: mois || s.mois,
   });
   return true;
+}
+
+/** Corriger la PÉRIODE de la commande active (et re-timbrer ses lignes).
+ * Utilisé quand une commande a été importée avec le mois d'importation alors
+ * que ses données couvrent un autre mois (ex. fichier d'octobre importé en
+ * novembre) — corrige pava_commandes.mois + le champ mois de chaque ligne. */
+export async function changerMoisCommande(mois: string): Promise<boolean> {
+  if (!DB_MODE) {
+    const s = syncActive(load());
+    const commandes = s.commandes.map((c) => (c.id === s.activeCommandeId ? { ...c, mois: mois || undefined } : c));
+    const active = commandes.find((c) => c.id === s.activeCommandeId);
+    save({ ...s, commandes, mois: active?.mois || '' });
+    return true;
+  }
+  const s = etatDb();
+  const idCmd = s.activeCommandeId;
+  if (!idCmd) return false;
+  try {
+    await api(`/commandes/${idCmd}/mois`, { method: 'PATCH', body: JSON.stringify({ mois }) });
+    // Mois de la commande dans l'état local, puis rechargement des lignes
+    // (le serveur les a re-timbrées dans les blobs).
+    const commandes = s.commandes.map((c) => (c.id === idCmd ? { ...c, mois: mois || undefined } : c));
+    dbState = assembler(commandes, s.params);
+    emit();
+    lignesChargees.delete(idCmd);
+    await chargerLignesCmd(idCmd, true);
+    effacerErreur();
+    return true;
+  } catch (e) {
+    noterErreur(e);
+    return false;
+  }
 }
 
 export function setActiveCommande(id: string) {

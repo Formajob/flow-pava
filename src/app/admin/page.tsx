@@ -62,6 +62,7 @@ export default function AdminDashboardPage() {
     return () => clearInterval(t);
   }, []);
   const [filtre, setFiltre] = useState<string>('toutes');
+  const [anneeChoisie, setAnneeChoisie] = useState<string>('');
 
   const longDate = today.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const canSee = snap.role === 'admin' || snap.role === 'directeur';
@@ -78,6 +79,16 @@ export default function AdminDashboardPage() {
         : commandeActive?.stats || STATS_VIDES,
     [snap.commandes, filtre, commandeActive]
   );
+
+  // Comptes clients distincts : stats pré-calculées, avec repli sur calcul
+  // direct pour la commande active (stats antérieures sans nbComptes).
+  const nbComptes = useMemo(() => {
+    if (stats.nbComptes) return stats.nbComptes;
+    if (commandeActive && commandeActive.id === snap.activeCommandeId) {
+      return new Set(snap.lignes.map((l) => l.compte).filter(Boolean)).size;
+    }
+    return stats.nbComptes || 0;
+  }, [stats, commandeActive, snap.activeCommandeId, snap.lignes]);
 
   const totaux = useMemo<Totaux>(() => {
     const t = JSON.parse(JSON.stringify(TOTAUX_VIDES)) as Totaux;
@@ -100,7 +111,7 @@ export default function AdminDashboardPage() {
         const st = c.stats || STATS_VIDES;
         return {
           id: c.id, nom: c.nom, statut: c.statut,
-          lignes: st.nbLignes, montant: st.totalCalcule, inco: st.nbIncoherences,
+          lignes: st.nbLignes, comptes: st.nbComptes || 0, montant: st.totalCalcule, inco: st.nbIncoherences,
         };
       }),
     [snap.commandes]
@@ -135,13 +146,14 @@ export default function AdminDashboardPage() {
   // Suivi mensuel : une ligne par MOIS (les commandes d'un même mois sont cumulées).
   // Se remplit au fil des imports des factures des mois précédents.
   const parMois = useMemo(() => {
-    const m = new Map<string, { mois: string; cmd: number; lignes: number; montant: number; inco: number; familles: Record<string, { n: number; m: number }>; complet: boolean }>();
+    const m = new Map<string, { mois: string; cmd: number; lignes: number; comptes: number; montant: number; inco: number; familles: Record<string, { n: number; m: number }>; complet: boolean }>();
     for (const c of snap.commandes) {
       if (!c.mois) continue;
-      const e = m.get(c.mois) || { mois: c.mois, cmd: 0, lignes: 0, montant: 0, inco: 0, familles: {}, complet: true };
+      const e = m.get(c.mois) || { mois: c.mois, cmd: 0, lignes: 0, comptes: 0, montant: 0, inco: 0, familles: {}, complet: true };
       const st = c.stats || STATS_VIDES;
       e.cmd += 1;
       e.lignes += st.nbLignes || 0;
+      e.comptes += st.nbComptes || 0;
       e.montant += st.totalCalcule || 0;
       e.inco += st.nbIncoherences || 0;
       if (!st.parFamille || Object.keys(st.parFamille).length === 0) e.complet = false;
@@ -157,6 +169,17 @@ export default function AdminDashboardPage() {
   }, [snap.commandes]);
   const maxMois = Math.max(1, ...parMois.map((m) => m.montant));
   const derniersMois = parMois.slice(-12); // le graphique montre les 12 derniers mois
+  // Vue ANNÉE : une ligne par mois, indépendante du filtre commande.
+  const annees = [...new Set(parMois.map((m) => m.mois.slice(0, 4)))].sort().reverse();
+  const annee = annees.includes(anneeChoisie) ? anneeChoisie : (annees[0] || '');
+  const moisAnnee = parMois.filter((m) => !annee || m.mois.startsWith(annee));
+  const totAnnee = {
+    cmd: moisAnnee.reduce((s2, m) => s2 + m.cmd, 0),
+    lignes: moisAnnee.reduce((s2, m) => s2 + m.lignes, 0),
+    comptes: moisAnnee.reduce((s2, m) => s2 + m.comptes, 0),
+    montant: moisAnnee.reduce((s2, m) => s2 + m.montant, 0),
+    inco: moisAnnee.reduce((s2, m) => s2 + m.inco, 0),
+  };
 
   if (!mounted) {
     return (
@@ -187,10 +210,7 @@ export default function AdminDashboardPage() {
         <div>
           <div className="g-kicker"><i /> VL · PAVA Affaire</div>
           <h1>Tableau de bord</h1>
-          <p className="g-lead">
-            Facturation Videotron PAV Affaire par commandes. Calculs globaux sur l&apos;ensemble
-            des commandes, ou filtrés sur une commande traitée.
-          </p>
+          <p className="g-lead">Facturation PAV Affaire — vue globale ou par commande.</p>
         </div>
         <div className="g-tools">
           <span className="g-date" suppressHydrationWarning>
@@ -219,8 +239,7 @@ export default function AdminDashboardPage() {
             {filtre === 'toutes' ? 'Toutes les commandes' : commandeActive?.nom} · <em>{montant(totaux.TOTAL.m)}</em>
           </h2>
           <p>
-            {totaux.TOTAL.n} lignes · AJOUT {totaux.AJOUT.n} · Renouvellement {totaux.RENOUVELLEMENT.n} ·
-            SACA {totaux.SACA.n} · Non facturée {totaux.NON_FACTUREE.n}.
+            {nbComptes.toLocaleString('fr-FR')} comptes clients · {totaux.TOTAL.n.toLocaleString('fr-FR')} lignes.
           </p>
           <div className="g-hero-actions">
             <Link className="g-btn" href="/admin/analyse">
@@ -255,7 +274,7 @@ export default function AdminDashboardPage() {
                 <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" />
               </svg>
             </span>
-            <span className="g-delta">{totaux.AJOUT.n} lignes</span>
+            <span className="g-delta">{nbComptes.toLocaleString('fr-FR')} comptes</span>
           </div>
           <b className="g-value g-num">{montant(totaux.AJOUT.m)}</b>
           <span className="g-label">AJOUT (branchements)</span>
@@ -268,7 +287,7 @@ export default function AdminDashboardPage() {
                 <path d="M20 6 9 17l-5-5" />
               </svg>
             </span>
-            <span className="g-delta is-ok">{totaux.RENOUVELLEMENT.n} lignes · 65 $</span>
+            <span className="g-delta is-ok">{totaux.RENOUVELLEMENT.n} renouvellements · 65 $</span>
           </div>
           <b className="g-value g-num">{montant(totaux.RENOUVELLEMENT.m)}</b>
           <span className="g-label">Renouvellement</span>
@@ -300,6 +319,64 @@ export default function AdminDashboardPage() {
           <span className="g-label">{filtre === 'toutes' ? 'Total global' : 'Total de la commande'}</span>
         </article>
       </section>
+
+      {parMois.length > 0 && (
+        <section className="g-card g-glass g-rise" style={{ ['--d' as string]: '.2s' }}>
+          <div className="g-card-head">
+            <div>
+              <h3 className="g-card-title">Chiffres par mois · vue année</h3>
+              <p className="g-card-sub">Toutes commandes, indépendamment du filtre.</p>
+            </div>
+            {annees.length > 1 && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                {annees.map((a) => (
+                  <button key={a} type="button" className={`g-btn g-btn--sm ${a === annee ? '' : 'g-btn--ghost'}`} onClick={() => setAnneeChoisie(a)}>
+                    {a}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="g-table-wrap">
+            <table className="g-table">
+              <thead>
+                <tr>
+                  <th>Mois</th>
+                  <th style={{ textAlign: 'right' }}>Commandes</th>
+                  <th style={{ textAlign: 'right' }}>Comptes</th>
+                  <th style={{ textAlign: 'right' }}>Lignes</th>
+                  <th style={{ textAlign: 'right' }}>Montant</th>
+                  <th style={{ textAlign: 'right' }}>Incohérences</th>
+                </tr>
+              </thead>
+              <tbody>
+                {moisAnnee.map((m) => (
+                  <tr key={m.mois}>
+                    <td><b>{libelleMois(m.mois)}</b></td>
+                    <td style={{ textAlign: 'right' }}>{m.cmd}</td>
+                    <td style={{ textAlign: 'right' }}>{m.comptes ? m.comptes.toLocaleString('fr-FR') : <span style={{ opacity: 0.4 }}>—</span>}</td>
+                    <td style={{ textAlign: 'right' }}>{m.lignes.toLocaleString('fr-FR')}</td>
+                    <td style={{ textAlign: 'right' }}><b className="g-num">{montant(m.montant)}</b></td>
+                    <td style={{ textAlign: 'right' }}>{m.inco ? m.inco.toLocaleString('fr-FR') : '0'}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td><b>Total {annee || ''}</b></td>
+                  <td style={{ textAlign: 'right' }}><b>{totAnnee.cmd}</b></td>
+                  <td style={{ textAlign: 'right' }}><b>{totAnnee.comptes ? totAnnee.comptes.toLocaleString('fr-FR') : '—'}</b></td>
+                  <td style={{ textAlign: 'right' }}><b>{totAnnee.lignes.toLocaleString('fr-FR')}</b></td>
+                  <td style={{ textAlign: 'right' }}><b className="g-num">{montant(totAnnee.montant)}</b></td>
+                  <td style={{ textAlign: 'right' }}><b>{totAnnee.inco.toLocaleString('fr-FR')}</b></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="g-card-foot">
+            <span>Vue globale par mois — le filtre en haut ne s&apos;applique pas ici.</span>
+            <span>Comptes = clients distincts par commande (cumul si plusieurs commandes).</span>
+          </div>
+        </section>
+      )}
 
       <section className="g-grid-2">
         <article className="g-card g-glass g-rise" style={{ ['--d' as string]: '.22s' }}>
@@ -435,7 +512,7 @@ export default function AdminDashboardPage() {
                   <b>{libelleMois(parMois[0].mois)}</b> · <b className="g-num">{montant(parMois[0].montant)}</b>
                   <br />
                   <span style={{ opacity: 0.8 }}>
-                    {parMois[0].lignes.toLocaleString('fr-FR')} lignes · {parMois[0].cmd} commande(s)
+                    {parMois[0].comptes ? `${parMois[0].comptes.toLocaleString('fr-FR')} comptes · ` : ''}{parMois[0].lignes.toLocaleString('fr-FR')} lignes
                   </span>
                 </div>
               </div>
@@ -489,7 +566,7 @@ export default function AdminDashboardPage() {
                       <div className="g-list-item">
                         <span className="g-list-main">
                           <b>{libelleMois(m.mois)}</b>
-                          <span>{m.lignes.toLocaleString('fr-FR')} lignes · {m.cmd} commande(s)</span>
+                          <span>{m.comptes ? `${m.comptes.toLocaleString('fr-FR')} comptes · ` : ''}{m.lignes.toLocaleString('fr-FR')} lignes</span>
                         </span>
                         <span className="g-list-side">
                           <b className="g-num">{montant(m.montant)}</b>{' '}
@@ -618,7 +695,7 @@ export default function AdminDashboardPage() {
           </div>
           <div className="g-table-wrap">
             <table className="g-table">
-              <thead><tr><th>Commande</th><th>Statut</th><th style={{ textAlign: 'right' }}>Lignes</th><th style={{ textAlign: 'right' }}>Incohérences</th><th style={{ textAlign: 'right' }}>Montant</th><th></th></tr></thead>
+              <thead><tr><th>Commande</th><th>Statut</th><th style={{ textAlign: 'right' }}>Comptes</th><th style={{ textAlign: 'right' }}>Incohérences</th><th style={{ textAlign: 'right' }}>Montant</th><th></th></tr></thead>
               <tbody>
                 {parCommande.map((c) => (
                   <tr key={c.id}>
@@ -628,7 +705,7 @@ export default function AdminDashboardPage() {
                         <i className="g-dot" />{c.statut === 'validee' ? 'Validée' : c.statut === 'valide_admin' ? 'Validée Admin' : 'En cours'}
                       </span>
                     </td>
-                    <td style={{ textAlign: 'right' }}>{c.lignes}</td>
+                    <td style={{ textAlign: 'right' }}>{c.comptes ? c.comptes.toLocaleString('fr-FR') : '—'}</td>
                     <td style={{ textAlign: 'right' }}>{c.inco}</td>
                     <td style={{ textAlign: 'right' }}>{montant(c.montant)}</td>
                     <td style={{ textAlign: 'right' }}>
@@ -645,47 +722,6 @@ export default function AdminDashboardPage() {
           </div>
         </section>
       )}
-
-      <section className="g-card g-glass g-rise" style={{ ['--d' as string]: '.31s' }}>
-        <div className="g-card-head">
-          <div>
-            <h3 className="g-card-title">Lignes · commande active · {snap.nomCommande || '—'} · {snap.lignes.length}</h3>
-            <p className="g-card-sub">Aperçu des 20 premières lignes de la commande consultée (chargées à la demande). Montants masqués pour l&apos;Analyste.</p>
-          </div>
-        </div>
-        {snap.lignes.length === 0 ? (
-          <p className="g-empty">{snap.enChargement ? 'Chargement des lignes…' : 'Aucune ligne — importez un fichier en page Importation.'}</p>
-        ) : (
-          <div className="g-table-wrap">
-            <table className="g-table">
-              <thead>
-                <tr>
-                  <th>Référence</th>
-                  <th>Compte</th>
-                  <th>Produit</th>
-                  <th>Catégorie</th>
-                  <th style={{ textAlign: 'right' }}>Montant</th>
-                </tr>
-              </thead>
-              <tbody>
-                {snap.lignes.slice(0, 20).map((l) => (
-                  <tr key={l.id}>
-                    <td><span className="g-ref">{l.id}</span></td>
-                    <td>{l.compte ? `Compte ${l.compte}` : '—'}</td>
-                    <td><b>{l.produit}</b> · {l.desc}</td>
-                    <td>{l.categorie}</td>
-                    <td style={{ textAlign: 'right' }}>{montant((l.montantCalcule ?? 0) + (l.ajustement || 0))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div className="g-card-foot">
-          <span>{snap.lignes.length.toLocaleString('fr-FR')} lignes · {montant(totaux.TOTAL.m)}</span>
-          <span>Le détail complet est sur la page Factures</span>
-        </div>
-      </section>
 
       <footer className="g-foot">
         <span>ACX Flow · Espace VL PAVA — chiffres lus dans les lignes.</span>

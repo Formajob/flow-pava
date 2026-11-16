@@ -8,7 +8,7 @@
 
 import { useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { getPavaState, subscribePava, addImportedFile, createCommande, setActiveCommande, addHistorique, addVersion, type PavaLigne } from '@/lib/pava-store';
+import { getPavaState, subscribePava, addImportedFile, createCommande, setActiveCommande, addHistorique, addVersion, changerMoisCommande, type PavaLigne } from '@/lib/pava-store';
 import { detecterFeuille, normaliserLigne, ligneDepuisRow, type FeuilleDetectee } from '@/lib/pava/normalize';
 import { montantAttendu } from '@/lib/pava/price-plan';
 
@@ -29,6 +29,7 @@ export default function ImportationPage() {
   // Mois de la facture créée : essentiel pour importer les mois précédents
   // (chaque commande porte son mois → suivi de l'évolution mensuelle).
   const [moisChoisi, setMoisChoisi] = useState(snap.mois || new Date().toISOString().slice(0, 7));
+  const [moisFix, setMoisFix] = useState(snap.mois || '');
   const [message, setMessage] = useState('');
   const [chargement, setChargement] = useState(false);
   const [pending, setPending] = useState<{ nomFichier: string; feuilles: FeuillePrete[] } | null>(null);
@@ -46,6 +47,15 @@ export default function ImportationPage() {
     } else {
       setMessage(snap.erreur || 'Création impossible.');
     }
+  };
+
+  /** Corriger la période de la commande active : re-timbre aussi toutes ses
+   * lignes importées (utile quand un fichier d'octobre a été importé en novembre,
+   * par ex.). Vide = sans période (fichier hors facture mensuelle). */
+  const corrigerMois = async () => {
+    setMessage('Correction de la période…');
+    const ok = await changerMoisCommande(moisFix.trim());
+    setMessage(ok ? `Période de la commande corrigée → ${moisFix.trim() || 'sans période'}. Les exports Excel/PDF utilisent maintenant cette période.` : snap.erreur || 'Correction impossible.');
   };
 
   /** Étape 1 — analyser le fichier : feuilles détectées, à confirmer. */
@@ -180,7 +190,7 @@ export default function ImportationPage() {
         <div>
           <div className="g-kicker"><i /> VL · PAVA Affaire</div>
           <h1>Importation</h1>
-          <p className="g-lead">Créez une commande de facture, importez les fichiers Excel, puis passez à l&apos;Analyse.</p>
+          <p className="g-lead">Créez une commande, importez les fichiers, puis passez à l&apos;Analyse.</p>
         </div>
         <div className="g-tools">
           <Link className="g-btn" href="/admin/analyse">Passer à l&apos;Analyse</Link>
@@ -206,32 +216,54 @@ export default function ImportationPage() {
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
           <label style={{ flex: '1 1 260px', fontSize: 12, fontWeight: 700 }}>
             Nom de la commande *
-            <input className="g-input" placeholder="Ex : Facture Novembre, facture_test, Vérification Août 2026" value={nom} onChange={(e) => setNom(e.target.value)} style={{ marginTop: 6 }} />
+            <input className="g-input" placeholder="Ex : Facture Décembre v1, Production semaine 50 équipe 3, Vérification Mars 2026…" value={nom} onChange={(e) => setNom(e.target.value)} style={{ marginTop: 6 }} />
           </label>
           <label style={{ fontSize: 12, fontWeight: 700 }}>
-            Mois de la facture *
+            Mois / période
             <input
               className="g-input"
               type="month"
               value={moisChoisi}
               onChange={(e) => setMoisChoisi(e.target.value)}
               style={{ marginTop: 6 }}
+              title="Laissez vide pour un fichier sans période mensuelle (ex. suivi de performance de production)"
             />
           </label>
           <button type="button" className="g-btn" onClick={creer}>Créer la commande</button>
         </div>
         <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--g-muted, #64748b)' }}>
-          Pour importer les mois précédents : indiquez le mois (ex. 2026-09), créez la commande, puis importez son fichier —
-          le tableau de bord suivra l&apos;évolution mensuelle des montants par famille.
+          Le nom est libre et représentatif du contenu : « Facture Décembre version 1 », « Production semaine 50 — équipe 3 »,
+          « Vérification facture Mars 2026 »… Pour les factures mensuelles, indiquez le mois (ex. 2026-09) : le tableau de bord
+          suivra l&apos;évolution mensuelle des montants par famille. Hors facture mensuelle, laissez le mois vide.
         </p>
         <div style={{ marginTop: 12, fontSize: 13 }}>
           Commande active :{' '}
           {snap.activeCommandeId ? (
             <><b>{snap.nomCommande}</b> · {snap.lignes.length} lignes · {snap.fichiers.length} fichiers</>
           ) : (
-            <b>aucune — créez la première commande de facturation ci-dessus</b>
+            <b>aucune — créez la première commande ci-dessus</b>
           )}
         </div>
+        {snap.activeCommandeId && (
+          <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
+            <span style={{ color: 'var(--g-muted, #64748b)' }}>Période actuelle :</span>
+            <b>{snap.mois || 'sans période'}</b>
+            <input
+              className="g-input"
+              type="month"
+              value={moisFix}
+              onChange={(e) => setMoisFix(e.target.value)}
+              style={{ maxWidth: 150, minHeight: 30 }}
+              title="Corriger le mois réel des données (re-timbre toutes les lignes importées)"
+            />
+            <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => void corrigerMois()}>
+              Corriger la période
+            </button>
+            <span style={{ color: 'var(--g-muted, #64748b)', fontSize: 11.5 }}>
+              (si un fichier d&apos;octobre a été importé en novembre, remettez ici le mois réel des données)
+            </span>
+          </div>
+        )}
         <div style={{ marginTop: 10 }}>
           <label style={{ fontSize: 12, fontWeight: 700 }}>
             Choisir une commande existante
@@ -248,7 +280,7 @@ export default function ImportationPage() {
         <div className="g-card-head">
           <div>
             <h3 className="g-card-title">Importer des fichiers</h3>
-            <p className="g-card-sub">Excel ou CSV (interne Xceed + client Videotron Affaire). La commande se génère comme fichier Excel au nom saisi.</p>
+            <p className="g-card-sub">Excel ou CSV (interne Xceed + client PAV Affaire).</p>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

@@ -164,7 +164,9 @@ export default function FacturesPage() {
     const doc = new jsPDF();
 
     const moisLabel = MOIS.find((m) => m.id === mois)?.label || mois;
-    const noFacture = `PAVA-${mois}`;
+    // Le NOM et la RÉFÉRENCE de la facture = le nom de la commande de facturation
+    // (représentatif : « Facture Décembre v1 », « Production semaine 50 équipe 3 »…).
+    const nomCommande = snap.nomCommande || 'Commande de facturation';
     const statutLabel = statut === 'validee' ? 'VALIDÉE' : statut === 'valide_admin' ? 'VALIDÉE ADMIN' : 'EN COURS';
     const statutCoul: [number, number, number] = statut === 'validee' ? [22, 163, 74] : statut === 'valide_admin' ? [8, 145, 178] : [217, 119, 6];
     const qteTotale = parFamille.reduce((s2, [, v]) => s2 + v.qte, 0);
@@ -189,12 +191,12 @@ export default function FacturesPage() {
     doc.setFontSize(8);
     doc.setTextColor(195, 206, 228);
     doc.text('By ACX Maroc', 14, 20);
-    doc.setFontSize(19);
+    doc.setFontSize(17);
     doc.setTextColor(11, 19, 48);
-    doc.text(`Facture PAVA — ${moisLabel}`, 14, 40);
+    doc.text(doc.splitTextToSize(nomCommande, 112), 14, 40);
     doc.setFontSize(10.5);
     doc.setTextColor(84, 101, 138);
-    doc.text(snap.nomCommande || 'Commande de facturation', 14, 46.5);
+    doc.text(`${mois ? `Facture PAVA — ${moisLabel} · ` : ''}PAV Affaire`, 14, 46.5);
 
     // Bloc méta à droite : n° facture, date, statut (pastille)
     doc.setDrawColor(219, 227, 243);
@@ -202,11 +204,12 @@ export default function FacturesPage() {
     doc.roundedRect(134, 33, 62, 22, 2.2, 2.2, 'FD');
     doc.setFontSize(8);
     doc.setTextColor(132, 148, 184);
-    doc.text('N° DE FACTURE', 139, 38.5);
+    doc.text('RÉFÉRENCE (COMMANDE)', 139, 37);
     doc.text('DATE D\u2019ÉMISSION', 139, 45);
-    doc.setFontSize(10.5);
+    doc.setFontSize(9);
     doc.setTextColor(11, 19, 48);
-    doc.text(noFacture, 139, 42.3);
+    doc.text(doc.splitTextToSize(nomCommande, 45), 139, 41);
+    doc.setFontSize(10.5);
     doc.text(new Date().toLocaleDateString('fr-FR'), 139, 48.8);
     doc.setFillColor(statutCoul[0], statutCoul[1], statutCoul[2]);
     doc.roundedRect(170.5, 35.6, 22, 6.4, 3.2, 3.2, 'F');
@@ -222,7 +225,7 @@ export default function FacturesPage() {
     doc.setFontSize(9.5);
     doc.setTextColor(35, 45, 75);
     doc.text(doc.splitTextToSize('ACX Maroc — préparé via ACX Flow · Espace VL PAVA', 85), 14, 61.5);
-    doc.text(doc.splitTextToSize('Videotron PAV Affaire — renouvellements et branchements', 85), 110, 61.5);
+    doc.text(doc.splitTextToSize('PAV Affaire — renouvellements et branchements', 85), 110, 61.5);
 
     // Rangée de KPI
     const kpis: Array<[string, string, string]> = [
@@ -261,11 +264,16 @@ export default function FacturesPage() {
         `${totalFamilles ? ((v.montant / totalFamilles) * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : 0} %`,
       ]),
       foot: [['Total général', String(qteTotale), fmt(totalFamilles), '100 %']],
-      styles: { fontSize: 9 },
+      styles: { fontSize: 9, overflow: 'linebreak' },
       headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
       footStyles: { fillColor: [238, 242, 251], textColor: [11, 19, 48], fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [246, 248, 253] },
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      columnStyles: {
+        0: { cellWidth: 40, halign: 'left' },
+        1: { cellWidth: 30, halign: 'right' },
+        2: { cellWidth: 44, halign: 'right' },
+        3: { cellWidth: 28, halign: 'right' },
+      },
     });
 
     const y1 = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 130;
@@ -286,11 +294,16 @@ export default function FacturesPage() {
         `${totalNature ? ((v.montant / totalNature) * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : 0} %`,
       ]),
       foot: [['TOTAL', String(parNature.reduce((s2, [, v]) => s2 + v.qte, 0)), fmt(totalNature), '100 %']],
-      styles: { fontSize: 9 },
+      styles: { fontSize: 9, overflow: 'linebreak' },
       headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
       footStyles: { fillColor: [238, 242, 251], textColor: [11, 19, 48], fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [246, 248, 253] },
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      columnStyles: {
+        0: { cellWidth: 40, halign: 'left' },
+        1: { cellWidth: 30, halign: 'right' },
+        2: { cellWidth: 44, halign: 'right' },
+        3: { cellWidth: 28, halign: 'right' },
+      },
     });
 
     // ════════ PAGE 2 — ANALYSES ════════
@@ -345,12 +358,17 @@ export default function FacturesPage() {
       });
       autoTable(doc, {
         startY: yEvol + 3,
-        head: [['Mois', 'Montant facturé', 'Δ vs mois précédent', 'Variation']],
+        head: [['Mois', 'Montant facturé', 'Écart vs M-1', 'Variation']],
         body: lignesEvol,
-        styles: { fontSize: 9 },
+        styles: { fontSize: 9, overflow: 'linebreak' },
         headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
         alternateRowStyles: { fillColor: [246, 248, 253] },
-        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+        columnStyles: {
+          0: { cellWidth: 34, halign: 'left' },
+          1: { cellWidth: 46, halign: 'right' },
+          2: { cellWidth: 46, halign: 'right' },
+          3: { cellWidth: 26, halign: 'right' },
+        },
       });
     } else {
       doc.setFontSize(9);
@@ -385,10 +403,14 @@ export default function FacturesPage() {
       startY: 26,
       head: [['Code service', 'Quantité', 'Montant ($)']],
       body: [...parCode.entries()].sort((a, b) => b[1].montant - a[1].montant).map(([c, v]) => [c, String(v.qte), fmt(v.montant)]),
-      styles: { fontSize: 8 },
+      styles: { fontSize: 8, overflow: 'linebreak' },
       headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
       alternateRowStyles: { fillColor: [246, 248, 253] },
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      columnStyles: {
+        0: { cellWidth: 96, halign: 'left' },
+        1: { cellWidth: 30, halign: 'right' },
+        2: { cellWidth: 40, halign: 'right' },
+      },
     });
 
     const yTop = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 100;
@@ -409,10 +431,14 @@ export default function FacturesPage() {
       startY: yComptes,
       head: [['Compte client', 'Quantité', 'Montant ($)']],
       body: [...parCompte.entries()].sort((a, b) => b[1].montant - a[1].montant).slice(0, 10).map(([c, v]) => [c, String(v.qte), fmt(v.montant)]),
-      styles: { fontSize: 8 },
+      styles: { fontSize: 8, overflow: 'linebreak' },
       headStyles: { fillColor: [11, 19, 48], textColor: [255, 255, 255] },
       alternateRowStyles: { fillColor: [246, 248, 253] },
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      columnStyles: {
+        0: { cellWidth: 60, halign: 'left' },
+        1: { cellWidth: 30, halign: 'right' },
+        2: { cellWidth: 40, halign: 'right' },
+      },
     });
 
     // ════════ Pieds de page paginés ════════
@@ -423,7 +449,7 @@ export default function FacturesPage() {
       doc.line(14, 285, 196, 285);
       doc.setFontSize(7.5);
       doc.setTextColor(148, 160, 188);
-      doc.text(`ACX Flow · Espace VL PAVA · Facture ${moisLabel} (${noFacture}) · Générée le ${new Date().toLocaleDateString('fr-FR')}`, 14, 289.5);
+      doc.text(doc.splitTextToSize(`ACX Flow · Espace VL PAVA · ${nomCommande}${mois ? ` · ${moisLabel}` : ''} · Générée le ${new Date().toLocaleDateString('fr-FR')}`, 130), 14, 289.5);
       doc.text(`Page ${i} / ${nbPages}`, 196, 289.5, { align: 'right' });
     }
 
@@ -453,7 +479,7 @@ export default function FacturesPage() {
           <div>
             <div className="g-kicker"><i /> VL · PAVA Affaire</div>
             <h1>Factures</h1>
-            <p className="g-lead">Toutes les commandes de facturation : facture du mois, ancienne facture à valider, test, suivi de production.</p>
+            <p className="g-lead">Toutes les commandes de facturation.</p>
           </div>
         </header>
         <section className="g-card g-glass g-rise">

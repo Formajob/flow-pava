@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useSession, signOut } from 'next-auth/react';
-import { getPavaState, subscribePava, setPavaRole, reinitialiserDemo, EST_MODE_DB, type Role } from '@/lib/pava-store';
+import { getPavaState, subscribePava, setPavaRole, EST_MODE_DB, type Role } from '@/lib/pava-store';
 import { TITRE_ROLE, type PavaRole } from '@/lib/pava-users';
 
 interface UtilisateurRow {
@@ -36,6 +36,8 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UtilisateurRow[] | null>(null);
   const [msgUsers, setMsgUsers] = useState('');
   const [nouveau, setNouveau] = useState({ email: '', nom: '', role: 'analyste', multiRoles: false, motDePasse: '' });
+  // Changement de mot de passe en ligne : id de l'utilisateur ciblé + nouveau mdp.
+  const [mdpPour, setMdpPour] = useState<{ id: string; valeur: string } | null>(null);
   const gestionActive = EST_MODE_DB && role === 'admin';
 
   const chargerUsers = useCallback(async () => {
@@ -44,7 +46,8 @@ export default function AdminPage() {
       const d = await r.json();
       if (!r.ok) { setMsgUsers(d.error || 'Chargement impossible.'); setUsers([]); return; }
       setUsers(d.utilisateurs || []);
-      setMsgUsers('');
+      // NB : ne pas effacer msgUsers ici — le rechargement qui suit une action
+      // effaçait le message de retour (« Suspendu », « Mot de passe changé »…).
     } catch {
       setUsers([]);
       setMsgUsers('Chargement des comptes impossible.');
@@ -91,9 +94,16 @@ export default function AdminPage() {
   };
 
   const changerMdp = async (u: UtilisateurRow) => {
-    const mdp = prompt(`Nouveau mot de passe pour ${u.email} (6 caractères minimum) :`);
-    if (!mdp) return;
-    await majUser(u.id, { motDePasse: mdp }, `Mot de passe de ${u.email} changé.`);
+    if (!mdpPour || mdpPour.valeur.length < 6) {
+      setMsgUsers('Mot de passe : 6 caractères minimum.');
+      return;
+    }
+    await majUser(u.id, { motDePasse: mdpPour.valeur }, `Mot de passe de ${u.email} changé.`);
+    setMdpPour(null);
+  };
+
+  const changerRole = async (u: UtilisateurRow, role2: string) => {
+    await majUser(u.id, { role: role2 }, `Rôle de ${u.email} → ${TITRE_ROLE[role2 as PavaRole]}.`);
   };
 
   return (
@@ -102,7 +112,7 @@ export default function AdminPage() {
         <div>
           <div className="g-kicker"><i /> VL · PAVA Affaire</div>
           <h1>Administration</h1>
-          <p className="g-lead">Rôles et accès. L&apos;Analyste importe et analyse sans voir les montants finaux.</p>
+          <p className="g-lead">Rôles, accès et comptes utilisateurs.</p>
         </div>
       </header>
 
@@ -110,7 +120,7 @@ export default function AdminPage() {
         <div className="g-card-head">
           <div>
             <h3 className="g-card-title">Compte connecté</h3>
-            <p className="g-card-sub">Le rôle est attribué par l&apos;adresse e-mail de connexion.</p>
+            <p className="g-card-sub">Session en cours.</p>
           </div>
           {session?.user && (
             <span className={`g-badge ${role === 'directeur' ? 'is-ok' : role === 'admin' ? 'is-info' : 'is-warn'}`}>
@@ -156,46 +166,8 @@ export default function AdminPage() {
       <section className="g-card g-glass g-rise">
         <div className="g-card-head">
           <div>
-            <h3 className="g-card-title">Stockage des données</h3>
-            <p className="g-card-sub">Où sont enregistrées les commandes, lignes et décisions.</p>
-          </div>
-          <span className={`g-badge ${EST_MODE_DB ? 'is-ok' : 'is-warn'}`}>
-            <i className="g-dot" />{EST_MODE_DB ? 'Base de données Supabase' : 'Mode démo (navigateur)'}
-          </span>
-        </div>
-        <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6 }}>
-          {EST_MODE_DB ? (
-            <>Les données sont enregistrées dans Supabase (base <b>flow</b>, tables <b>pava_*</b>) via les routes API du serveur.</>
-          ) : (
-            <>Les données restent dans <b>ce navigateur</b> (localStorage) — rien n&apos;est envoyé à Supabase.
-            Créez <b>.env.local</b> avec <b>NEXT_PUBLIC_SUPABASE_URL</b> et <b>SUPABASE_SERVICE_ROLE_KEY</b> puis relancez le serveur.</>
-          )}
-        </p>
-        {!EST_MODE_DB && (
-          <div style={{ marginTop: 14 }}>
-            <button
-              type="button"
-              className="g-btn g-btn--ghost"
-              onClick={() => {
-                if (!confirm('Effacer les données démo de ce navigateur (Facture Septembre, Octobre, imports test) ?')) return;
-                reinitialiserDemo();
-              }}
-            >
-              Effacer les données démo
-            </button>
-          </div>
-        )}
-      </section>
-
-      <section className="g-card g-glass g-rise">
-        <div className="g-card-head">
-          <div>
             <h3 className="g-card-title">Comptes utilisateurs</h3>
-            <p className="g-card-sub">
-              {EST_MODE_DB
-                ? 'Gérés dans la table pava_utilisateurs — ajoutez des comptes, changez les mots de passe, désactivez un accès.'
-                : 'En mode base, les comptes seront gérables ici (table pava_utilisateurs).'}
-            </p>
+            <p className="g-card-sub">Ajouter, suspendre, réactiver, changer rôle ou mot de passe.</p>
           </div>
         </div>
 
@@ -206,20 +178,57 @@ export default function AdminPage() {
                 <thead><tr><th>Adresse</th><th>Nom</th><th>Rôle</th><th>État</th><th>Actions</th></tr></thead>
                 <tbody>
                   {(users || []).map((u) => (
-                    <tr key={u.id}>
+                    <tr key={u.id} style={u.actif ? undefined : { opacity: 0.6 }}>
                       <td>{u.email}{u.email === session?.user?.email ? ' (vous)' : ''}</td>
                       <td><b>{u.nom}</b></td>
                       <td>
-                        <span className={`g-badge ${u.role === 'directeur' ? 'is-ok' : u.role === 'admin' ? 'is-info' : 'is-warn'}`}>
-                          <i className="g-dot" />{TITRE_ROLE[u.role]}{u.multi_roles ? ' + au choix' : ''}
-                        </span>
+                        {u.email === session?.user?.email ? (
+                          <span className={`g-badge ${u.role === 'directeur' ? 'is-ok' : u.role === 'admin' ? 'is-info' : 'is-warn'}`}>
+                            <i className="g-dot" />{TITRE_ROLE[u.role]}{u.multi_roles ? ' + au choix' : ''}
+                          </span>
+                        ) : (
+                          <select
+                            className="g-input"
+                            style={{ minHeight: 30, padding: '2px 8px' }}
+                            value={u.role}
+                            onChange={(e) => void changerRole(u, e.target.value)}
+                            title="Changer le rôle"
+                          >
+                            <option value="analyste">Analyste</option>
+                            <option value="admin">Admin</option>
+                            <option value="directeur">Directeur</option>
+                          </select>
+                        )}
                       </td>
-                      <td>{u.actif ? 'Actif' : 'Désactivé'}</td>
                       <td>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => changerMdp(u)}>Mot de passe</button>
-                          <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => majUser(u.id, { actif: !u.actif }, u.actif ? 'Compte désactivé.' : 'Compte réactivé.')}>
-                            {u.actif ? 'Désactiver' : 'Réactiver'}
+                        <span className={`g-badge ${u.actif ? 'is-ok' : 'is-warn'}`}><i className="g-dot" />{u.actif ? 'Actif' : 'Suspendu'}</span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                          {mdpPour?.id === u.id ? (
+                            <>
+                              <input
+                                className="g-input"
+                                type="password"
+                                style={{ minHeight: 30, width: 150 }}
+                                placeholder="Nouveau mot de passe"
+                                value={mdpPour.valeur}
+                                autoFocus
+                                onChange={(e) => setMdpPour({ id: u.id, valeur: e.target.value })}
+                                onKeyDown={(e) => { if (e.key === 'Enter') void changerMdp(u); if (e.key === 'Escape') setMdpPour(null); }}
+                              />
+                              <button type="button" className="g-btn g-btn--sm" onClick={() => void changerMdp(u)}>OK</button>
+                              <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => setMdpPour(null)}>Annuler</button>
+                            </>
+                          ) : (
+                            <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => setMdpPour({ id: u.id, valeur: '' })}>Mot de passe</button>
+                          )}
+                          <button
+                            type="button"
+                            className="g-btn g-btn--ghost g-btn--sm"
+                            onClick={() => majUser(u.id, { actif: !u.actif }, u.actif ? `Compte ${u.email} suspendu — accès refusé à la connexion.` : `Compte ${u.email} réactivé.`)}
+                          >
+                            {u.actif ? 'Suspendre' : 'Réactiver'}
                           </button>
                           {u.email !== session?.user?.email && (
                             <button type="button" className="g-btn g-btn--ghost g-btn--sm" onClick={() => supprimerUser(u)}>Supprimer</button>
@@ -229,7 +238,7 @@ export default function AdminPage() {
                     </tr>
                   ))}
                   {users && users.length === 0 && (
-                    <tr><td colSpan={5}>Aucun compte — la table pava_utilisateurs est vide (exécutez supabase/migrations/002_pava_utilisateurs.sql).</td></tr>
+                    <tr><td colSpan={5}>Aucun compte — exécutez supabase/migrations/002_pava_utilisateurs.sql.</td></tr>
                   )}
                 </tbody>
               </table>

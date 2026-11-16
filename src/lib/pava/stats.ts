@@ -14,6 +14,8 @@ export interface StatsCategorie {
 
 export interface StatsCommande {
   nbLignes: number;
+  /** Comptes clients DISTINCTS de la commande (NO_CLI uniques). */
+  nbComptes: number;
   totalFacture: number;
   totalCalcule: number;
   nbIncoherences: number;
@@ -26,6 +28,7 @@ export interface StatsCommande {
 
 export const STATS_VIDES: StatsCommande = {
   nbLignes: 0,
+  nbComptes: 0,
   totalFacture: 0,
   totalCalcule: 0,
   nbIncoherences: 0,
@@ -35,9 +38,13 @@ export const STATS_VIDES: StatsCommande = {
 
 /** Fusionne les stats de plusieurs commandes (vue globale du tableau de bord). */
 export function fusionnerStats(liste: StatsCommande[]): StatsCommande {
-  const out: StatsCommande = { nbLignes: 0, totalFacture: 0, totalCalcule: 0, nbIncoherences: 0, parCategorie: {}, parFamille: {} };
+  // NB : nbComptes d'une fusion = SOMME des comptes distincts par commande
+  // (un même client présent sur deux commandes compte deux fois — approximation
+  // acceptable pour la vue globale, exacte pour une commande seule).
+  const out: StatsCommande = { nbLignes: 0, nbComptes: 0, totalFacture: 0, totalCalcule: 0, nbIncoherences: 0, parCategorie: {}, parFamille: {} };
   for (const s of liste) {
     out.nbLignes += s.nbLignes || 0;
+    out.nbComptes += s.nbComptes || 0;
     out.totalFacture += s.totalFacture || 0;
     out.totalCalcule += s.totalCalcule || 0;
     out.nbIncoherences += s.nbIncoherences || 0;
@@ -61,10 +68,12 @@ export function fusionnerStats(liste: StatsCommande[]): StatsCommande {
 export function calculerStats(lignes: PavaLigne[]): StatsCommande {
   const parCategorie: Record<string, StatsCategorie> = {};
   const parFamille: Record<string, StatsCategorie> = {};
+  const comptes = new Set<string>();
   let totalFacture = 0;
   let totalCalcule = 0;
   let nbIncoherences = 0;
   for (const l of lignes) {
+    if (l.compte) comptes.add(String(l.compte));
     const montant = (l.montantCalcule ?? 0) + (l.ajustement || 0);
     const cat = l.categorie || 'AJOUT';
     const cur = parCategorie[cat] || { n: 0, m: 0 };
@@ -80,5 +89,5 @@ export function calculerStats(lignes: PavaLigne[]): StatsCommande {
     totalCalcule += montant;
     if (l.incomplet || l.incoherence) nbIncoherences++;
   }
-  return { nbLignes: lignes.length, totalFacture, totalCalcule, nbIncoherences, parCategorie, parFamille };
+  return { nbLignes: lignes.length, nbComptes: comptes.size, totalFacture, totalCalcule, nbIncoherences, parCategorie, parFamille };
 }

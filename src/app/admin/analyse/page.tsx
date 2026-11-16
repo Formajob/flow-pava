@@ -16,6 +16,9 @@ import { aTraiter, estTraitee, grouper, lignesDistinctes } from '@/lib/pava/grou
 export default function AnalysePage() {
   const snap = useSyncExternalStore(subscribePava, getPavaState, getPavaState);
   const [exportEnCours, setExportEnCours] = useState(false);
+  // Vue « En cours » par défaut : seules les incohérences NON traitées en Contrôle.
+  // La vue « Toutes » les affiche avec leur statut (traitées / partiellement).
+  const [vue, setVue] = useState<'cours' | 'toutes'>('cours');
 
   const lignesNorm = useMemo(
     () => depuisDemo(snap.lignes as unknown as Array<Record<string, unknown>>, snap.mois),
@@ -29,6 +32,11 @@ export default function AnalysePage() {
   const resultat = useMemo(() => runEngine(lignesNorm, snap.params, refsMoteur), [lignesNorm, snap.params, refsMoteur]);
   const ouvertes = useMemo(() => aTraiter(resultat.anomalies, snap.decisions), [resultat.anomalies, snap.decisions]);
   const groupes = useMemo(() => grouper(resultat.anomalies, snap.decisions), [resultat.anomalies, snap.decisions]);
+  const groupesAffiches = useMemo(
+    () => (vue === 'cours' ? groupes.filter((g) => g.nbOuvertes > 0) : groupes),
+    [groupes, vue]
+  );
+  const nbGroupesTraites = groupes.filter((g) => g.nbOuvertes === 0).length;
   const impactOuvert = ouvertes.reduce((s, a) => s + a.impact, 0);
 
   const parFamille = useMemo(() => {
@@ -110,26 +118,63 @@ export default function AnalysePage() {
             <div className="g-card-head">
               <div>
                 <h3 className="g-card-title">Incohérences par groupe</h3>
-                <p className="g-card-sub">Une même ligne peut être signalée par plusieurs règles : les compteurs « lignes » ne la comptent qu’une fois.</p>
+                <p className="g-card-sub">
+                  Vue « En cours » : uniquement ce qui reste à traiter (après traitement en Contrôle, les groupes quittent cette vue).
+                  Basculez sur « Toutes » pour revoir aussi les groupes traités, avec leur statut.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className={`g-btn g-btn--sm ${vue === 'cours' ? '' : 'g-btn--ghost'}`} onClick={() => setVue('cours')}>
+                  En cours · {groupes.filter((g) => g.nbOuvertes > 0).length}
+                </button>
+                <button type="button" className={`g-btn g-btn--sm ${vue === 'toutes' ? '' : 'g-btn--ghost'}`} onClick={() => setVue('toutes')}>
+                  Toutes · {groupes.length}
+                </button>
               </div>
             </div>
             {groupes.length === 0 ? (
               <p className="g-empty">Aucune incohérence détectée.</p>
+            ) : groupesAffiches.length === 0 ? (
+              <p className="g-empty">
+                ✓ Toutes les incohérences sont traitées ({nbGroupesTraites} groupe(s) résolu(s) en Contrôle).
+                Affichez « Toutes » pour l&apos;historique.
+              </p>
             ) : (
               <div className="g-table-wrap">
                 <table className="g-table">
-                  <thead><tr><th>Règle</th><th>Raison</th><th>Confiance</th><th style={{ textAlign: 'right' }}>Lignes</th><th style={{ textAlign: 'right' }}>Traitées</th><th style={{ textAlign: 'right' }}>Impact restant</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Règle</th>
+                      <th>Raison</th>
+                      <th>Confiance</th>
+                      {vue === 'toutes' && <th>Statut</th>}
+                      <th style={{ textAlign: 'right' }}>{vue === 'cours' ? 'Lignes en cours' : 'Lignes'}</th>
+                      {vue === 'toutes' && <th style={{ textAlign: 'right' }}>Traitées</th>}
+                      <th style={{ textAlign: 'right' }}>Impact restant</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {groupes.map((g) => (
-                      <tr key={g.cle}>
-                        <td><span className="g-ref">{g.regle}</span></td>
-                        <td><b>{g.raison}</b></td>
-                        <td><span className={`g-badge ${g.confiance === 'REGLE' ? 'is-ok' : g.confiance === 'PROBABLE' ? 'is-info' : g.confiance === 'A_VALIDER' ? 'is-warn' : 'is-muted'}`}><i className="g-dot" />{g.confiance}</span></td>
-                        <td style={{ textAlign: 'right' }}>{fmt(g.items.length)}</td>
-                        <td style={{ textAlign: 'right' }}>{fmt(g.items.filter((a) => estTraitee(a, snap.decisions)).length)}</td>
-                        <td style={{ textAlign: 'right' }}>{g.info ? '—' : `${fmt(g.impactOuvert)} $`}</td>
-                      </tr>
-                    ))}
+                    {groupesAffiches.map((g) => {
+                      const traitees = g.items.length - g.nbOuvertes;
+                      const statut = g.nbOuvertes === 0 ? 'Traité' : traitees > 0 ? 'Partiel' : 'En cours';
+                      return (
+                        <tr key={g.cle} style={vue === 'toutes' && g.nbOuvertes === 0 ? { opacity: 0.6 } : undefined}>
+                          <td><span className="g-ref">{g.regle}</span></td>
+                          <td><b>{g.raison}</b></td>
+                          <td><span className={`g-badge ${g.confiance === 'REGLE' ? 'is-ok' : g.confiance === 'PROBABLE' ? 'is-info' : g.confiance === 'A_VALIDER' ? 'is-warn' : 'is-muted'}`}><i className="g-dot" />{g.confiance}</span></td>
+                          {vue === 'toutes' && (
+                            <td>
+                              <span className={`g-badge ${statut === 'Traité' ? 'is-ok' : statut === 'Partiel' ? 'is-warn' : 'is-info'}`}>
+                                <i className="g-dot" />{statut}
+                              </span>
+                            </td>
+                          )}
+                          <td style={{ textAlign: 'right' }}>{fmt(vue === 'cours' ? g.nbOuvertes : g.items.length)}</td>
+                          {vue === 'toutes' && <td style={{ textAlign: 'right' }}>{fmt(traitees)}</td>}
+                          <td style={{ textAlign: 'right' }}>{g.info ? '—' : `${fmt(g.impactOuvert)} $`}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

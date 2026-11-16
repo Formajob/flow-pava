@@ -21,8 +21,8 @@ export interface PavaUser {
 
 export const UTILISATEURS_PAVA: PavaUser[] = [
   { email: 'jawad@acx.ma', nom: 'Jawad', role: 'admin', roles: ['analyste', 'admin', 'directeur'], titre: 'Admin · ACX Maroc' },
-  { email: 'ghita.khalil@videotron.com', nom: 'Ghita Khalil', role: 'analyste', roles: ['analyste'], titre: 'Analyste · Videotron' },
-  { email: 'marzouk.ousmane@videotron.com', nom: 'Marzouk Ousmane', role: 'directeur', roles: ['directeur'], titre: 'Directeur · Videotron' },
+  { email: 'ghita.khalil@videotron.com', nom: 'Ghita Khalil', role: 'analyste', roles: ['analyste'], titre: 'Analyste · VL' },
+  { email: 'marzouk.ousmane@videotron.com', nom: 'Marzouk Ousmane', role: 'directeur', roles: ['directeur'], titre: 'Directeur · VL' },
 ];
 
 export const TITRE_ROLE: Record<PavaRole, string> = {
